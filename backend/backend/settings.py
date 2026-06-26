@@ -65,6 +65,8 @@ INSTALLED_APPS = [
 ]
 
 MIDDLEWARE = [
+        "corsheaders.middleware.CorsMiddleware",
+
     'django.middleware.security.SecurityMiddleware',
     'whitenoise.middleware.WhiteNoiseMiddleware',  # Add whitenoise for static files
     'django.middleware.gzip.GZipMiddleware',  # GZIP compression za smanjenje response size
@@ -215,6 +217,7 @@ SIMPLE_JWT = {
 # CORS - dozvoli Vue app-u
 if DEBUG:
     CORS_ALLOWED_ORIGINS = [
+        "https://betapackupdate.netlify.app",
         "http://localhost:8080",
         "http://localhost:5173",
     ]
