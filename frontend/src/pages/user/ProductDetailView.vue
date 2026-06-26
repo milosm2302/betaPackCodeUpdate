@@ -7,10 +7,12 @@ import TheFooter from '@/components/TheFooter.vue'
 import { useCartStore } from '@/store/cart'
 import { api } from '@/services/api'
 import { getImageUrl } from '@/composables/useImageUrl'
+import { useStore } from '@/composables/useStore'
 
 const route = useRoute()
 const router = useRouter()
 const cartStore = useCartStore()
+const { storeRoute } = useStore()
 
 const product = ref(null)
 const loading = ref(true)
@@ -290,7 +292,7 @@ const fetchProduct = async () => {
     }
   } catch (error) {
     console.error('Error fetching product:', error)
-    router.push('/')
+    router.push(storeRoute())
   } finally {
     loading.value = false
   }
@@ -377,7 +379,7 @@ const selectImage = (index) => {
 }
 
 const goBack = () => {
-  router.push('/')
+  router.push(storeRoute())
 }
 
 // Validate quantity for sold_by_length products (must be whole number or whole + 0.5)
@@ -654,7 +656,7 @@ onMounted(() => {
                 </router-link>
 
                 <button
-                  @click="router.push('/kontakt')"
+                  @click="router.push(storeRoute('/kontakt'))"
                   class="w-full bg-white hover:bg-gray-50 text-gray-900 font-semibold py-2.5 rounded-lg border border-gray-300 transition cursor-pointer text-sm"
                 >
                   📞 Kontaktirajte nas za ponudu

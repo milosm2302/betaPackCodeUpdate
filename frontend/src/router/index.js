@@ -1,7 +1,6 @@
 import { createRouter, createWebHistory } from "vue-router";
-import { nextTick } from "vue";
-import Login from "../admin/pages/Login.vue";
-import AdminView from "../admin/pages/AdminView.vue";
+import { useAuthStore } from "@/store/auth";
+import HomeView from "@/pages/user/HomeView.vue";
 import ShopView from "@/pages/user/ShopView.vue";
 import CartView from "@/pages/user/CartView.vue";
 import ProductDetailView from "@/pages/user/ProductDetailView.vue";
@@ -10,45 +9,76 @@ import OrderSuccessView from "@/pages/user/OrderSuccessView.vue";
 import ContactView from "@/pages/user/ContactView.vue";
 import AboutView from "@/pages/user/AboutView.vue";
 import NotFoundView from "@/pages/user/NotFoundView.vue";
-import { useAuthStore } from "@/store/auth";
+import Login from "../admin/pages/Login.vue";
+import AdminView from "../admin/pages/AdminView.vue";
+
+const storeChildRoutes = (store) => [
+    {
+        path: '',
+        name: `${store}-shop`,
+        component: ShopView,
+        meta: { store }
+    },
+    {
+        path: 'proizvod/:slugOrId',
+        name: `${store}-product-detail`,
+        component: ProductDetailView,
+        meta: { store }
+    },
+    {
+        path: 'cart',
+        name: `${store}-cart`,
+        component: CartView,
+        meta: { store }
+    },
+    {
+        path: 'checkout',
+        name: `${store}-checkout`,
+        component: CheckoutView,
+        meta: { store }
+    },
+    {
+        path: 'order-success/:orderId',
+        name: `${store}-order-success`,
+        component: OrderSuccessView,
+        meta: { store }
+    },
+    {
+        path: 'kontakt',
+        name: `${store}-contact`,
+        component: ContactView,
+        meta: { store }
+    },
+    {
+        path: 'o-nama',
+        name: `${store}-about`,
+        component: AboutView,
+        meta: { store }
+    },
+]
 
 const router = createRouter({
     routes: [
         {
             path: '/',
-            name: 'shop',
-            component: ShopView
+            name: 'home',
+            component: HomeView
         },
         {
-            path: '/proizvod/:slugOrId',
-            name: 'product-detail',
-            component: ProductDetailView
+            path: '/steel',
+            children: storeChildRoutes('steel')
         },
         {
-            path: '/cart',
-            name: 'cart',
-            component: CartView
+            path: '/ambalaza',
+            children: storeChildRoutes('ambalaza')
         },
-        {
-            path: '/checkout',
-            name: 'checkout',
-            component: CheckoutView
-        },
-        {
-            path: '/order-success/:orderId',
-            name: 'order-success',
-            component: OrderSuccessView
-        },
-        {
-            path: '/kontakt',
-            name: 'contact',
-            component: ContactView
-        },
-        {
-            path: '/o-nama',
-            name: 'about',
-            component: AboutView
-        },
+        // Legacy redirects
+        { path: '/proizvod/:slugOrId', redirect: to => `/steel/proizvod/${to.params.slugOrId}` },
+        { path: '/cart', redirect: '/steel/cart' },
+        { path: '/checkout', redirect: '/steel/checkout' },
+        { path: '/order-success/:orderId', redirect: to => `/steel/order-success/${to.params.orderId}` },
+        { path: '/kontakt', redirect: '/steel/kontakt' },
+        { path: '/o-nama', redirect: '/steel/o-nama' },
         {
             path: '/admin',
             redirect: '/admin/login'
@@ -72,26 +102,17 @@ const router = createRouter({
     ],
     history: createWebHistory(import.meta.env.BASE_URL),
     scrollBehavior(to, from, savedPosition) {
-        // Ako korisnik koristi back/forward dugme, vrati na prethodnu poziciju
         if (savedPosition) {
             return savedPosition
         }
-
-        // Ako je hash (anchor link), scroll na taj element
         if (to.hash) {
-            return {
-                el: to.hash,
-                behavior: 'smooth',
-            }
+            return { el: to.hash, behavior: 'smooth' }
         }
-
-        // Za sve ostale slučajeve, forsiraj scroll na vrh
-        // Koristi window.scrollTo kao fallback za maksimalnu kompatibilnost
         return new Promise((resolve) => {
             setTimeout(() => {
                 window.scrollTo(0, 0)
                 resolve({ top: 0, left: 0 })
-            }, 100) // 100ms delay garantuje da se DOM učitao
+            }, 100)
         })
     }
 })
@@ -106,6 +127,5 @@ router.beforeEach((to, from, next) => {
         next()
     }
 })
-
 
 export default router

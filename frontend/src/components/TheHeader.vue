@@ -4,10 +4,16 @@ import { useRouter } from 'vue-router'
 import { useCartStore } from '@/store/cart'
 import { useAuthStore } from '@/store/auth'
 import { getImageUrl } from '@/composables/useImageUrl'
+import { useStore } from '@/composables/useStore'
+import { STORE_LIST } from '@/config/stores'
+import {
+  getQuantityStep, getMinQuantity, isPackageMode, isLengthMode, isOnRequest
+} from '@/composables/useSellingMode'
 
 const router = useRouter()
 const cartStore = useCartStore()
 const authStore = useAuthStore()
+const { store, storeRoute, storeId } = useStore()
 
 const mobileMenuOpen = ref(false)
 const showCartPreview = ref(false)
@@ -18,6 +24,7 @@ const cartTotal = computed(() => cartStore.total)
 const isAdmin = computed(() => authStore.isAdmin)
 
 const formatPrice = (price) => {
+  if (price == null) return 'Na upit'
   return new Intl.NumberFormat('sr-RS', {
     style: 'currency',
     currency: 'RSD',
@@ -33,7 +40,8 @@ const navigateTo = (route) => {
 }
 
 const updateQuantity = (item, newQuantity) => {
-  if (newQuantity < 1) return
+  const min = getMinQuantity(item)
+  if (newQuantity < min) return
   cartStore.updateQuantity(item.cartId || item.id, newQuantity)
 }
 
@@ -52,39 +60,46 @@ const handleLogout = () => {
     <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
       <div class="flex justify-between items-center h-16 lg:h-18">
 
-        <!-- Logo -->
         <div class="flex items-center gap-3 lg:gap-4 cursor-pointer" @click="navigateTo('/')">
           <img src="/betapack-logo.png" alt="Beta Pack Logo" class="h-10 lg:h-12 w-auto" />
-          <div class="text-base lg:text-lg font-bold text-white">
-            BETA PACK
+          <div>
+            <div class="text-base lg:text-lg font-bold text-white">BETA PACK</div>
+            <div v-if="store" class="text-[10px] text-gray-400 font-medium hidden sm:block">{{ store.shortLabel }}</div>
           </div>
         </div>
 
-        <!-- Desktop Navigation -->
-        <nav class="hidden md:flex items-center gap-3 lg:gap-4">
-          <button
-            @click="navigateTo('/')"
-            class="text-gray-300 hover:text-white hover:bg-white/10 px-3 lg:px-4 py-1.5 lg:py-2 rounded-lg transition font-semibold text-sm lg:text-base cursor-pointer"
-          >
-            Prodavnica
-          </button>
-          <button
-            @click="navigateTo('/o-nama')"
-            class="text-gray-300 hover:text-white hover:bg-white/10 px-3 lg:px-4 py-1.5 lg:py-2 rounded-lg transition font-semibold text-sm lg:text-base cursor-pointer"
-          >
-            O nama
-          </button>
-          <button
-            @click="navigateTo('/kontakt')"
-            class="text-gray-300 hover:text-white hover:bg-white/10 px-3 lg:px-4 py-1.5 lg:py-2 rounded-lg transition font-semibold text-sm lg:text-base cursor-pointer"
-          >
-            Kontakt
-          </button>
+        <nav class="hidden md:flex items-center gap-2 lg:gap-3">
+          <!-- Store switcher -->
+          <div class="flex items-center gap-1 bg-white/5 rounded-xl p-1 border border-white/10">
+            <button
+              v-for="s in STORE_LIST"
+              :key="s.id"
+              @click="navigateTo(s.path)"
+              :class="storeId === s.id ? 'bg-[#1976d2] text-white shadow' : 'text-gray-300 hover:text-white hover:bg-white/10'"
+              class="flex items-center gap-1 px-3 lg:px-4 py-1.5 rounded-lg transition font-semibold text-sm cursor-pointer"
+            >
+              <span>{{ s.icon }}</span>
+              <span>{{ s.shortLabel }}</span>
+            </button>
+          </div>
+
+          <template v-if="store">
+            <button
+              @click="navigateTo(storeRoute('/o-nama'))"
+              class="text-gray-300 hover:text-white hover:bg-white/10 px-3 lg:px-4 py-1.5 lg:py-2 rounded-lg transition font-semibold text-sm lg:text-base cursor-pointer"
+            >
+              O nama
+            </button>
+            <button
+              @click="navigateTo(storeRoute('/kontakt'))"
+              class="text-gray-300 hover:text-white hover:bg-white/10 px-3 lg:px-4 py-1.5 lg:py-2 rounded-lg transition font-semibold text-sm lg:text-base cursor-pointer"
+            >
+              Kontakt
+            </button>
+          </template>
         </nav>
 
-        <!-- Cart & Actions -->
         <div class="flex items-center gap-4">
-          <!-- Admin Link (only for admin users) -->
           <button
             v-if="isAdmin"
             @click="navigateTo('/admin')"
@@ -94,7 +109,6 @@ const handleLogout = () => {
             <span>Admin</span>
           </button>
 
-          <!-- Logout Button (only for logged in users) -->
           <button
             v-if="authStore.isAuthenticated"
             @click="handleLogout"
@@ -104,10 +118,9 @@ const handleLogout = () => {
             <span>Logout</span>
           </button>
 
-          <!-- Cart with hover preview -->
-          <div class="relative group">
+          <div v-if="store" class="relative group">
             <button
-              @click="navigateTo('/cart')"
+              @click="navigateTo(storeRoute('/cart'))"
               class="relative flex items-center gap-1 bg-[#1976d2] hover:bg-[#1565c0] px-2 py-1 rounded-lg transition font-semibold text-xs cursor-pointer"
             >
               <span class="text-lg">🛒</span>
@@ -120,25 +133,20 @@ const handleLogout = () => {
               </span>
             </button>
 
-            <!-- Cart Preview Dropdown -->
             <div
               v-if="cartItems.length > 0"
               class="invisible group-hover:visible opacity-0 group-hover:opacity-100 transition-all duration-200 absolute right-0 top-full pt-2 w-96 z-[100]"
             >
               <div class="bg-white rounded-xl shadow-2xl border border-gray-200 max-h-[600px] overflow-hidden flex flex-col">
-                <!-- Header -->
                 <div class="p-4 border-b bg-gray-50">
                   <h3 class="font-bold text-lg text-gray-900">Korpa ({{ cartItemCount }})</h3>
                 </div>
-
-                <!-- Items List -->
                 <div class="flex-1 overflow-y-auto p-4 space-y-3">
                   <div
                     v-for="item in cartItems"
                     :key="item.cartId || item.id"
                     class="flex gap-3 pb-3 border-b last:border-0"
                   >
-                    <!-- Image -->
                     <div class="w-16 h-16 bg-gray-100 rounded-lg overflow-hidden flex-shrink-0">
                       <img
                         v-if="item.images && item.images.length > 0"
@@ -150,49 +158,38 @@ const handleLogout = () => {
                         <span class="text-2xl">📦</span>
                       </div>
                     </div>
-
-                    <!-- Info -->
                     <div class="flex-1 min-w-0">
                       <h4 class="font-semibold text-sm text-gray-900 line-clamp-1">{{ item.name }}</h4>
-                      <p v-if="item.selectedVariant" class="text-xs text-gray-600">
-                        {{ item.selectedVariant.name }}
-                      </p>
+                      <p v-if="item.selectedVariant" class="text-xs text-gray-600">{{ item.selectedVariant.name }}</p>
                       <p class="text-sm font-bold text-green-700 mt-1">{{ formatPrice(item.current_price) }}</p>
-
-                      <!-- Quantity Controls -->
-                      <div class="flex items-center gap-2 mt-2">
+                      <div v-if="!isOnRequest(item)" class="flex items-center gap-2 mt-2">
                         <button
-                          @click.stop="updateQuantity(item, item.quantity - 1)"
+                          @click.stop="updateQuantity(item, item.quantity - getQuantityStep(item))"
                           class="w-6 h-6 bg-gray-200 hover:bg-gray-300 rounded text-xs font-semibold text-gray-900 cursor-pointer"
-                        >
-                          -
-                        </button>
+                        >-</button>
                         <span class="text-sm font-semibold text-gray-900 w-6 text-center">{{ item.quantity }}</span>
                         <button
-                          @click.stop="updateQuantity(item, item.quantity + 1)"
+                          @click.stop="updateQuantity(item, item.quantity + getQuantityStep(item))"
                           class="w-6 h-6 bg-gray-200 hover:bg-gray-300 rounded text-xs font-semibold text-gray-900 cursor-pointer"
-                        >
-                          +
-                        </button>
+                        >+</button>
                         <button
                           @click.stop="removeItem(item)"
                           class="ml-auto text-red-600 hover:text-red-700 text-xs font-semibold cursor-pointer"
-                        >
-                          Ukloni
-                        </button>
+                        >Ukloni</button>
                       </div>
+                      <p v-if="isPackageMode(item)" class="text-[10px] text-green-600 mt-1">
+                        {{ item.quantity / (item.package_size || 1) }} pak. ({{ item.quantity }} kom.)
+                      </p>
                     </div>
                   </div>
                 </div>
-
-                <!-- Footer -->
                 <div class="p-4 border-t bg-gray-50 space-y-3">
                   <div class="flex justify-between items-center">
                     <span class="font-bold text-gray-900">Ukupno:</span>
                     <span class="text-xl font-bold text-green-700">{{ formatPrice(cartTotal) }}</span>
                   </div>
                   <button
-                    @click="navigateTo('/cart')"
+                    @click="navigateTo(storeRoute('/cart'))"
                     class="w-full bg-[#1976d2] hover:bg-[#1565c0] text-white font-semibold py-2.5 rounded-lg transition cursor-pointer"
                   >
                     Pogledaj korpu
@@ -200,111 +197,42 @@ const handleLogout = () => {
                 </div>
               </div>
             </div>
-
-            <!-- Empty Cart Preview -->
-            <div
-              v-if="cartItems.length === 0"
-              class="invisible group-hover:visible opacity-0 group-hover:opacity-100 transition-all duration-200 absolute right-0 top-full pt-2 w-80 z-[100]"
-            >
-              <div class="bg-white rounded-xl shadow-2xl border border-gray-200 p-6 text-center">
-                <span class="text-5xl text-gray-300 mb-3 block">🛒</span>
-                <p class="text-gray-600 font-medium">Korpa je prazna</p>
-              </div>
-            </div>
           </div>
 
-          <!-- Mobile menu button -->
           <button
             @click="mobileMenuOpen = !mobileMenuOpen"
             class="md:hidden text-gray-300 hover:text-white p-2 cursor-pointer"
           >
-            <svg
-              class="w-6 h-6"
-              fill="none"
-              stroke="currentColor"
-              viewBox="0 0 24 24"
-            >
-              <path
-                v-if="!mobileMenuOpen"
-                stroke-linecap="round"
-                stroke-linejoin="round"
-                stroke-width="2"
-                d="M4 6h16M4 12h16M4 18h16"
-              />
-              <path
-                v-else
-                stroke-linecap="round"
-                stroke-linejoin="round"
-                stroke-width="2"
-                d="M6 18L18 6M6 6l12 12"
-              />
+            <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path v-if="!mobileMenuOpen" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16" />
+              <path v-else stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
             </svg>
           </button>
         </div>
       </div>
     </div>
 
-    <!-- Mobile Navigation -->
-    <div
-      v-if="mobileMenuOpen"
-      class="md:hidden bg-gray-800 border-t border-gray-700"
-    >
+    <div v-if="mobileMenuOpen" class="md:hidden bg-gray-800 border-t border-gray-700">
       <nav class="px-4 py-4 space-y-2">
+        <p class="text-[10px] uppercase tracking-wider text-gray-500 font-bold px-4 pt-1">Prodavnica</p>
         <button
-          @click="navigateTo('/')"
-          class="block w-full text-left text-gray-300 hover:text-white hover:bg-white/10 px-4 py-3 rounded-lg transition font-semibold text-base cursor-pointer"
+          v-for="s in STORE_LIST"
+          :key="s.id"
+          @click="navigateTo(s.path)"
+          :class="storeId === s.id ? 'bg-[#1976d2] text-white' : 'text-gray-300 hover:text-white hover:bg-white/10'"
+          class="flex items-center gap-2 w-full text-left px-4 py-3 rounded-lg transition font-semibold text-base cursor-pointer"
         >
-          Prodavnica
+          <span>{{ s.icon }}</span>
+          <span>{{ s.label }}</span>
         </button>
-        <button
-          @click="navigateTo('/o-nama')"
-          class="block w-full text-left text-gray-300 hover:text-white hover:bg-white/10 px-4 py-3 rounded-lg transition font-semibold text-base cursor-pointer"
-        >
-          O nama
-        </button>
-        <button
-          @click="navigateTo('/kontakt')"
-          class="block w-full text-left text-gray-300 hover:text-white hover:bg-white/10 px-4 py-3 rounded-lg transition font-semibold text-base cursor-pointer"
-        >
-          Kontakt
-        </button>
-        <!-- Admin Link (Mobile) -->
-        <button
-          v-if="isAdmin"
-          @click="navigateTo('/admin')"
-          class="block w-full text-left text-gray-300 hover:text-white hover:bg-white/10 px-4 py-3 rounded-lg transition font-semibold text-base cursor-pointer border-t border-gray-700 mt-2"
-        >
-          ⚙️ Admin Panel
-        </button>
-        <!-- Logout Button (Mobile) -->
-        <button
-          v-if="authStore.isAuthenticated"
-          @click="handleLogout"
-          class="block w-full text-left text-red-400 hover:text-white hover:bg-red-600/20 px-4 py-3 rounded-lg transition font-semibold text-base cursor-pointer border-t border-gray-700"
-        >
-          🚪 Logout
-        </button>
+        <template v-if="store">
+          <button @click="navigateTo(storeRoute('/o-nama'))" class="block w-full text-left text-gray-300 hover:text-white hover:bg-white/10 px-4 py-3 rounded-lg transition font-semibold text-base cursor-pointer">O nama</button>
+          <button @click="navigateTo(storeRoute('/kontakt'))" class="block w-full text-left text-gray-300 hover:text-white hover:bg-white/10 px-4 py-3 rounded-lg transition font-semibold text-base cursor-pointer">Kontakt</button>
+          <button @click="navigateTo(storeRoute('/cart'))" class="block w-full text-left text-gray-300 hover:text-white hover:bg-white/10 px-4 py-3 rounded-lg transition font-semibold text-base cursor-pointer">🛒 Korpa</button>
+        </template>
+        <button v-if="isAdmin" @click="navigateTo('/admin')" class="block w-full text-left text-gray-300 hover:text-white hover:bg-white/10 px-4 py-3 rounded-lg transition font-semibold text-base cursor-pointer border-t border-gray-700 mt-2">⚙️ Admin Panel</button>
+        <button v-if="authStore.isAuthenticated" @click="handleLogout" class="block w-full text-left text-red-400 hover:text-white hover:bg-red-600/20 px-4 py-3 rounded-lg transition font-semibold text-base cursor-pointer border-t border-gray-700">🚪 Logout</button>
       </nav>
     </div>
   </header>
 </template>
-
-<style scoped>
-.fade-slide-enter-active {
-  transition: all 0.2s ease-out;
-}
-
-.fade-slide-leave-active {
-  transition: all 0.15s ease-in;
-}
-
-.fade-slide-enter-from {
-  opacity: 0;
-  transform: translateY(-10px);
-}
-
-.fade-slide-leave-to {
-  opacity: 0;
-  transform: translateY(-10px);
-}
-</style>

@@ -4,6 +4,7 @@ import { useOrderStore } from '../store/orders'
 import { useAuthStore } from '@/store/auth'
 import ConfirmModal from '@/components/ConfirmModal.vue'
 import { api } from '@/services/api'
+import { getStoreById } from '@/config/stores'
 
 const emit = defineEmits(['update-count'])
 const orderStore = useOrderStore()
@@ -108,6 +109,20 @@ const formatPrice = (price) =>
 
 const formatDate = (dateString) =>
   new Date(dateString).toLocaleString('sr-RS')
+
+// Label za prodavnicu/e iz kojih je narudžbina (mešovite narudžbine spaja sa +)
+const getOrderStores = (order) => {
+  const ids = (order.stores && order.stores.length) ? order.stores : (order.store ? [order.store] : [])
+  return ids.map(id => getStoreById(id))
+}
+
+const orderStoreLabel = (order) =>
+  getOrderStores(order).map(s => s.shortLabel).join(' + ')
+
+const orderStoreIcons = (order) =>
+  getOrderStores(order).map(s => s.icon).join(' ')
+
+const isMixedOrder = (order) => (order.stores && order.stores.length > 1)
 
 // Watch za promene u listi porudžbina - samo ažuriraj tabove, ne emituj event
 watch(() => orderStore.list, () => {
@@ -358,6 +373,13 @@ const startSSE = () => {
                   <span class="text-sm">📅</span>
                   <p class="text-xs font-medium">{{ formatDate(order.created_at) }}</p>
                 </div>
+                <span
+                  v-if="getOrderStores(order).length"
+                  class="px-2 py-0.5 rounded-full text-[10px] font-bold"
+                  :class="isMixedOrder(order) ? 'bg-purple-100 text-purple-700' : 'bg-gray-100 text-gray-700'"
+                >
+                  {{ orderStoreIcons(order) }} {{ orderStoreLabel(order) }}
+                </span>
               </div>
 
               <!-- Customer Info -->
@@ -460,6 +482,9 @@ const startSSE = () => {
               Narudžbina #{{ orderStore.selected.id }}
             </h3>
             <p class="text-xs opacity-90 px-1">{{ formatDate(orderStore.selected.created_at) }}</p>
+            <p v-if="getOrderStores(orderStore.selected).length" class="text-xs opacity-90 px-1 mt-1">
+              {{ orderStoreIcons(orderStore.selected) }} {{ orderStoreLabel(orderStore.selected) }}
+            </p>
           </div>
 
           <button @click="closeDetailModal" class="text-2xl hover:bg-white/20 rounded px-2 py-1 cursor-pointer transition">

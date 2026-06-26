@@ -6,12 +6,13 @@ const API_URL = import.meta.env.VITE_API_BASE_URL || 'http://127.0.0.1:8000/api'
 export const useProductStore = defineStore('products', {
     state: () => ({
         products: [],
-        loading: false
+        loading: false,
+        currentStore: 'steel'
     }),
 
     getters: {
         filteredProducts: (state) => (filters) => {
-            let res = [...state.products]
+            let res = state.products.filter(p => p.store === state.currentStore || !p.store)
 
             if (filters.category) {
                 res = res.filter(p => p.category === filters.category)
@@ -42,10 +43,11 @@ export const useProductStore = defineStore('products', {
     },
 
     actions: {
-        async fetchProducts() {
+        async fetchProducts(store = 'steel') {
             this.loading = true
+            this.currentStore = store
             try {
-                const r = await axios.get(`${API_URL}/products/`)
+                const r = await axios.get(`${API_URL}/products/`, { params: { store } })
                 this.products = r.data
             } finally {
                 this.loading = false

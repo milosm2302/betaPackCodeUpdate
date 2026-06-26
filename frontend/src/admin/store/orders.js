@@ -11,14 +11,15 @@ export const useOrderStore = defineStore('orders', {
     }),
 
     actions: {
-        async fetchAll() {
+        async fetchAll(store = null) {
             this.loading = true
             const auth = useAuthStore()
+            const params = store ? { store } : {}
 
             try {
                 const response = await api.get(
                     'orders/',
-                    { headers: { Authorization: `Bearer ${auth.accessToken}` } }
+                    { params, headers: { Authorization: `Bearer ${auth.accessToken}` } }
                 )
                 this.list = response.data
             } finally {

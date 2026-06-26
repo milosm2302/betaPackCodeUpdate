@@ -1,5 +1,5 @@
 <script setup>
-import { onMounted } from 'vue'
+import { onMounted, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { useAuthStore } from '@/store/auth'
 
@@ -10,12 +10,14 @@ import ContactMessagesManager from '../components/ContactMessagesManager.vue'
 import CompetitorMonitor from '../components/CompetitorMonitor.vue'
 
 import { useAdminNav } from '../composables/useAdminNav'
+import { useAdminStore } from '../composables/useAdminStore'
 import { useAdminStatsStore } from '../store/adminStats'
 
 const router = useRouter()
 const authStore = useAuthStore()
 
 const { activeView, setView, views } = useAdminNav()
+const { activeStore, setStore, storeTabs } = useAdminStore()
 const statsStore = useAdminStatsStore()
 
 const handleLogout = () => {
@@ -27,11 +29,18 @@ const goToHomePage = () => {
   router.push('/')
 }
 
+const refreshStats = () => statsStore.refresh(activeStore.value)
+
+const selectStore = (storeId) => {
+  setStore(storeId)
+  refreshStats()
+}
+
+watch(activeStore, () => refreshStats())
+
 onMounted(async () => {
-  // Prvo proveri i osveži token ako je potrebno
   await authStore.initialize()
-  // Zatim osveži brojače
-  await statsStore.refresh()
+  await refreshStats()
 })
 </script>
 
@@ -151,24 +160,42 @@ onMounted(async () => {
       <!-- Main content -->
       <main class="flex-1 overflow-y-auto max-w-[1600px] mx-auto md:ml-[240px]" :class="activeView === 'orders' ? 'p-4 pt-0' : 'p-4'">
 
+        <!-- Store selector (catalog only) -->
+        <div v-if="activeView !== 'competitors' && activeView !== 'orders' && activeView !== 'contact'" class="flex gap-2 mb-4">
+          <button
+            v-for="tab in storeTabs"
+            :key="tab.id"
+            @click="selectStore(tab.id)"
+            :class="activeStore === tab.id
+              ? 'bg-[#1976d2] text-white shadow-md'
+              : 'bg-white text-gray-700 hover:bg-gray-50 border border-gray-200'"
+            class="px-4 py-2 rounded-lg font-semibold text-sm cursor-pointer transition flex items-center gap-2"
+          >
+            <span>{{ tab.icon }}</span>
+            <span>{{ tab.label }}</span>
+          </button>
+        </div>
+
         <CategoryManager
           v-if="activeView === 'categories'"
-          @update-count="statsStore.refresh"
+          :store="activeStore"
+          @update-count="refreshStats"
         />
 
         <ProductManager
           v-if="activeView === 'products'"
-          @update-count="statsStore.refresh"
+          :store="activeStore"
+          @update-count="refreshStats"
         />
 
         <OrdersManager
           v-if="activeView === 'orders'"
-          @update-count="statsStore.refresh"
+          @update-count="refreshStats"
         />
 
         <ContactMessagesManager
           v-if="activeView === 'contact'"
-          @update-count="statsStore.refresh"
+          @update-count="refreshStats"
         />
 
         <CompetitorMonitor

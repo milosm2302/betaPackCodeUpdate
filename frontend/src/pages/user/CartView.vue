@@ -7,6 +7,10 @@ import TheFooter from '@/components/TheFooter.vue'
 import { useCartStore } from '@/store/cart'
 import ConfirmModal from '@/components/ConfirmModal.vue'
 import { getImageUrl } from '@/composables/useImageUrl'
+import { useStore } from '@/composables/useStore'
+import {
+  getQuantityStep, getMinQuantity, isValidLengthQuantity, isPackageMode, isLengthMode, isOnRequest, formatQuantityLabel
+} from '@/composables/useSellingMode'
 
 // SEO Meta Tags
 useHead({
@@ -41,6 +45,7 @@ const confirm = () => {
 
 const router = useRouter()
 const cartStore = useCartStore()
+const { storeRoute } = useStore()
 
 const formatPrice = (price) => {
   return new Intl.NumberFormat('sr-RS', {
@@ -55,35 +60,21 @@ const cartItems = computed(() => cartStore.items)
 const cartTotal = computed(() => cartStore.total)
 const cartCount = computed(() => cartStore.itemCount)
 
-// Validate quantity for sold_by_length products (must be whole number or whole + 0.5)
-const isValidLengthQuantity = (quantity) => {
-  if (quantity <= 0) return false
-  // Check if it's a whole number or whole + 0.5
-  const decimalPart = quantity % 1
-  return decimalPart === 0 || decimalPart === 0.5
-}
-
 const updateQuantity = (item, newQuantity) => {
-  const minQuantity = item.sold_by_length ? 0.5 : 1
+  const minQuantity = getMinQuantity(item)
   if (newQuantity < minQuantity) return
-  
-  // Validate for sold_by_length products
-  if (item.sold_by_length && !isValidLengthQuantity(newQuantity)) {
+
+  if (isLengthMode(item) && !isValidLengthQuantity(newQuantity)) {
     const itemId = item.cartId || item.id
-    quantityErrors.value[itemId] = 'Proizvod se prodaje ceo ili na pola (npr. 1, 1.5, 2, 2.5). Uneta vrednost nije validna.'
-    // Round to nearest valid value (whole or whole + 0.5)
+    quantityErrors.value[itemId] = 'Proizvod se prodaje ceo ili na pola (npr. 1, 1.5, 2, 2.5).'
     const whole = Math.floor(newQuantity)
     const decimal = newQuantity % 1
     newQuantity = decimal < 0.25 ? whole : (decimal < 0.75 ? whole + 0.5 : whole + 1)
-    // Clear error after a short delay
-    setTimeout(() => {
-      quantityErrors.value[itemId] = null
-    }, 3000)
+    setTimeout(() => { quantityErrors.value[itemId] = null }, 3000)
   } else {
-    const itemId = item.cartId || item.id
-    quantityErrors.value[itemId] = null
+    quantityErrors.value[item.cartId || item.id] = null
   }
-  
+
   cartStore.updateQuantity(item.cartId || item.id, newQuantity)
 }
 
@@ -103,7 +94,7 @@ const clearCart = () => {
 
 
 const goToCheckout = () => {
-  router.push('/checkout')
+  router.push(storeRoute('/checkout'))
 }
 </script>
 
@@ -116,7 +107,7 @@ const goToCheckout = () => {
 
         <!-- Back Button -->
         <button
-          @click="router.push('/')"
+          @click="router.push(storeRoute())"
           class="flex items-center gap-2 text-gray-600 hover:text-gray-900 mb-6 transition cursor-pointer"
         >
           <span>←</span>
@@ -131,7 +122,7 @@ const goToCheckout = () => {
           <h2 class="text-xl lg:text-2xl font-bold text-gray-900 mb-2">Vaša korpa je prazna</h2>
           <p class="text-gray-600 mb-4 text-sm lg:text-base">Dodajte proizvode u korpu da biste nastavili</p>
           <button
-            @click="router.push('/')"
+            @click="router.push(storeRoute())"
             class="bg-[#1976d2] hover:bg-[#1565c0] text-white font-semibold px-4 py-2 rounded-lg transition cursor-pointer text-sm"
           >
             Pogledaj proizvode
@@ -174,32 +165,32 @@ const goToCheckout = () => {
               <!-- Quantity & Actions -->
               <div class="flex flex-col items-end justify-between">
                 <!-- Quantity -->
-                <div class="flex items-center gap-2 bg-gray-100 rounded-lg p-1">
+                <div v-if="!isOnRequest(item)" class="flex items-center gap-2 bg-gray-100 rounded-lg p-1">
                   <button
-                    @click="updateQuantity(item, item.quantity - (item.sold_by_length ? 0.5 : 1))"
-                    :disabled="item.quantity <= (item.sold_by_length ? 0.5 : 1)"
+                    @click="updateQuantity(item, item.quantity - getQuantityStep(item))"
+                    :disabled="item.quantity <= getMinQuantity(item)"
                     class="w-8 h-8 bg-white rounded text-gray-700 hover:bg-gray-200 hover:text-black font-bold transition disabled:opacity-50 cursor-pointer disabled:cursor-not-allowed border border-gray-300 hover:border-gray-400"
-                  >
-                    -
-                  </button>
+                  >-</button>
                   <input
                     :value="item.quantity"
-                    @input="updateQuantity(item, parseFloat($event.target.value) || (item.sold_by_length ? 0.5 : 1))"
-                    @blur="updateQuantity(item, Math.max(item.sold_by_length ? 0.5 : 1, parseFloat($event.target.value) || (item.sold_by_length ? 0.5 : 1)))"
+                    @input="updateQuantity(item, parseFloat($event.target.value) || getMinQuantity(item))"
+                    @blur="updateQuantity(item, Math.max(getMinQuantity(item), parseFloat($event.target.value) || getMinQuantity(item)))"
                     type="number"
-                    :min="item.sold_by_length ? 0.5 : 1"
-                    :step="item.sold_by_length ? 0.5 : 1"
+                    :min="getMinQuantity(item)"
+                    :step="getQuantityStep(item)"
                     class="w-24 text-center font-semibold bg-white border border-gray-300 rounded px-2 py-1 focus:ring-2 focus:ring-[#1976d2] focus:outline-none"
                   />
                   <button
-                    @click="updateQuantity(item, item.quantity + (item.sold_by_length ? 0.5 : 1))"
+                    @click="updateQuantity(item, item.quantity + getQuantityStep(item))"
                     class="w-8 h-8 bg-white rounded text-gray-700 hover:bg-gray-200 hover:text-black font-bold transition cursor-pointer border border-gray-300 hover:border-gray-400"
-                  >
-                    +
-                  </button>
+                  >+</button>
                 </div>
-                <p v-if="item.sold_by_length" class="text-[10px] text-blue-600 font-semibold italic mt-1 text-right">
+                <p v-else class="text-xs text-orange-600 font-semibold">Cena na upit</p>
+                <p v-if="isLengthMode(item)" class="text-[10px] text-blue-600 font-semibold italic mt-1 text-right">
                   📏 {{ (parseFloat(item.quantity) * (item.length_per_unit || 6)).toFixed(2) }} metara
+                </p>
+                <p v-if="isPackageMode(item)" class="text-[10px] text-green-600 font-semibold italic mt-1 text-right">
+                  📦 {{ formatQuantityLabel(item, item.quantity) }}
                 </p>
                 <p v-if="quantityErrors[item.cartId || item.id]" class="text-[10px] text-red-600 font-semibold italic mt-1 text-right">
                   ❌ {{ quantityErrors[item.cartId || item.id] }}
@@ -207,9 +198,10 @@ const goToCheckout = () => {
 
                 <!-- Subtotal -->
                 <div class="text-right">
-                  <p class="text-base font-bold text-gray-900">
+                  <p v-if="!isOnRequest(item)" class="text-base font-bold text-gray-900">
                     {{ formatPrice(item.current_price * item.quantity) }}
                   </p>
+                  <p v-else class="text-sm font-semibold text-orange-600">Na upit</p>
                 </div>
 
                 <!-- Remove button below quantity controls -->
@@ -263,7 +255,7 @@ const goToCheckout = () => {
               </button>
 
               <button
-                @click="router.push('/')"
+                @click="router.push(storeRoute())"
                 class="w-full bg-white hover:bg-gray-50 text-gray-900 font-semibold py-3 rounded-lg border-2 border-gray-300 transition"
               >
                 Nastavi kupovinu

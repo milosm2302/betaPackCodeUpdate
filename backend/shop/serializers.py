@@ -14,7 +14,7 @@ class CategorySerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Category
-        fields = ['id', 'name', 'description', 'subcategories', 'product_count', 'created_at']
+        fields = ['id', 'store', 'name', 'description', 'subcategories', 'product_count', 'created_at']
 
 
 class ProductImageSerializer(serializers.ModelSerializer):
@@ -83,36 +83,122 @@ class ProductSerializer(serializers.ModelSerializer):
     class Meta:
         model = Product
         fields = [
-            'id', 'name', 'slug', 'description', 'price', 'on_sale', 'sale_price',
+            'id', 'store', 'name', 'slug', 'description', 'price', 'dimensions',
+            'on_sale', 'sale_price',
             'category', 'category_name', 'subcategory', 'subcategory_name',
             'current_price', 'min_price', 'original_min_price', 'has_sale_variants',
-            'featured', 'in_stock', 'stock_quantity', 'sold_by_length', 'length_per_unit',
+            'featured', 'in_stock', 'stock_quantity',
+            'selling_mode', 'package_size',
+            'sold_by_length', 'length_per_unit',
             'order', 'variants', 'images', 'created_at', 'updated_at'
         ]
         extra_kwargs = {
-            'length_per_unit': {'required': False}
+            'length_per_unit': {'required': False},
+            'slug': {'read_only': True},
+            'price': {'required': False, 'allow_null': True},
         }
+        # Slug se auto-generiše u modelu; ne validiramo unique_together(store, slug) na nivou serializera
+        validators = []
+
+    def to_internal_value(self, data):
+        """
+        Podržava store-lokalne ID-jeve kategorija za Ambalažu.
+
+        Primer: ako payload pošalje store="ambalaza" i category=2, a globalna
+        kategorija #2 pripada gvožđari, category=2 se tumači kao druga
+        ambalaža kategorija (po ID redosledu) i prevodi se na njen pravi DB ID.
+
+        Ako je poslati category već pravi globalni ID za dati store, ne menjamo ga.
+        Steel tok ostaje kompatibilan sa postojećim ponašanjem.
+        """
+        mutable_data = data.copy()
+        store = mutable_data.get('store')
+        category_value = mutable_data.get('category')
+
+        if store and category_value not in (None, ''):
+            try:
+                category_number = int(category_value)
+            except (TypeError, ValueError):
+                category_number = None
+
+            if category_number is not None:
+                category = Category.objects.filter(pk=category_number).first()
+                if category is None or category.store != store:
+                    if category_number < 1:
+                        raise serializers.ValidationError({
+                            'category': ['ID kategorije mora biti veći od 0.']
+                        })
+
+                    local_category = Category.objects.filter(store=store).order_by('id')[
+                        category_number - 1:category_number
+                    ].first()
+
+                    if not local_category:
+                        raise serializers.ValidationError({
+                            'category': [f'Kategorija {category_number} ne postoji za prodavnicu {store}.']
+                        })
+
+                    mutable_data['category'] = local_category.id
+
+        return super().to_internal_value(mutable_data)
     
     def validate_length_per_unit(self, value):
         """Validacija za length_per_unit"""
         if value is not None and value <= 0:
             raise serializers.ValidationError("Dužina mora biti veća od 0")
         return value
-    
+
+    def validate(self, data):
+        """
+        Cena sme biti prazna SAMO za ambalažu sa načinom prodaje "na upit" (on_request).
+        Ako store nije naglašen u API-ju → tretira se kao steel (gvožđara) i cena je OBAVEZNA.
+        Time se za gvožđaru zadržava originalno ponašanje (cena obavezna).
+        """
+        # Kategorija je source of truth za prodavnicu (model radi isto pri save-u).
+        # Ako store nije naglašen u API-ju, tretira se kao steel osim ako postoji
+        # već vezana kategorija/instanca koja kaže drugačije.
+        category = data.get('category') or getattr(self.instance, 'category', None)
+        store = category.store if category else data.get('store') or getattr(self.instance, 'store', 'steel')
+
+        # Način prodaje (na partial update čitaj sa postojeće instance)
+        selling_mode = data.get('selling_mode')
+        if selling_mode is None:
+            selling_mode = getattr(self.instance, 'selling_mode', 'piece')
+
+        is_on_request = (store == 'ambalaza' and selling_mode == 'on_request')
+
+        if not is_on_request:
+            price = data.get('price')
+            if price is None:
+                price = getattr(self.instance, 'price', None)
+            if price is None or price <= 0:
+                raise serializers.ValidationError(
+                    {'price': ['Cena je obavezna i mora biti veća od 0.']}
+                )
+
+        return data
+
     def create(self, validated_data):
         """Override create da osigura da length_per_unit ima default vrednost"""
         if 'length_per_unit' not in validated_data or validated_data.get('length_per_unit') is None:
             validated_data['length_per_unit'] = 6.0
+        if validated_data.get('category'):
+            validated_data['store'] = validated_data['category'].store
+        if validated_data.get('selling_mode') == 'on_request':
+            validated_data['price'] = None
         return super().create(validated_data)
     
     def update(self, instance, validated_data):
         """Override update da osigura da length_per_unit ima default vrednost"""
         if 'length_per_unit' not in validated_data or validated_data.get('length_per_unit') is None:
-            # Ako instance već ima length_per_unit, zadrži ga, inače koristi default
             if hasattr(instance, 'length_per_unit') and instance.length_per_unit is not None:
                 validated_data['length_per_unit'] = instance.length_per_unit
             else:
                 validated_data['length_per_unit'] = 6.0
+        if validated_data.get('category'):
+            validated_data['store'] = validated_data['category'].store
+        if validated_data.get('selling_mode') == 'on_request':
+            validated_data['price'] = None
         return super().update(instance, validated_data)
     
     def to_representation(self, instance):
@@ -133,16 +219,37 @@ class OrderItemSerializer(serializers.ModelSerializer):
     unit_price = serializers.DecimalField(max_digits=10, decimal_places=2, read_only=True)
     total_price = serializers.DecimalField(max_digits=10, decimal_places=2, read_only=True)
     sold_by_length = serializers.SerializerMethodField()
+    selling_mode = serializers.SerializerMethodField()
+    package_size = serializers.SerializerMethodField()
     effective_length_per_unit = serializers.SerializerMethodField()
 
     def get_sold_by_length(self, obj):
         """Vraća da li je proizvod prodavan po metraži"""
         try:
-            if obj.product and hasattr(obj.product, 'sold_by_length'):
-                return obj.product.sold_by_length
+            if obj.product:
+                if hasattr(obj.product, 'selling_mode') and obj.product.selling_mode == 'length':
+                    return True
+                if hasattr(obj.product, 'sold_by_length'):
+                    return obj.product.sold_by_length
         except (AttributeError, ValueError):
             pass
         return False
+
+    def get_selling_mode(self, obj):
+        try:
+            if obj.product and hasattr(obj.product, 'selling_mode'):
+                return obj.product.selling_mode
+        except (AttributeError, ValueError):
+            pass
+        return 'piece'
+
+    def get_package_size(self, obj):
+        try:
+            if obj.product and hasattr(obj.product, 'package_size'):
+                return obj.product.package_size
+        except (AttributeError, ValueError):
+            pass
+        return 1
 
     def get_effective_length_per_unit(self, obj):
         """Vraća efektivnu dužinu po jedinici (iz varijante ili proizvoda)"""
@@ -163,20 +270,33 @@ class OrderItemSerializer(serializers.ModelSerializer):
         model = OrderItem
         fields = [
             'id', 'order', 'product', 'product_name', 'variant', 'variant_name',
-            'quantity', 'unit_price', 'total_price', 'sold_by_length', 'effective_length_per_unit'
+            'quantity', 'unit_price', 'total_price',
+            'sold_by_length', 'selling_mode', 'package_size', 'effective_length_per_unit'
         ]
 
 
 class OrderSerializer(serializers.ModelSerializer):
     items = OrderItemSerializer(many=True, read_only=True)
+    stores = serializers.SerializerMethodField()
 
     class Meta:
         model = Order
         fields = [
-            'id', 'customer_name', 'customer_phone', 'customer_email',
+            'id', 'store', 'stores', 'customer_name', 'customer_phone', 'customer_email',
             'address', 'city', 'notes', 'status', 'total_amount',
             'items', 'created_at', 'updated_at'
         ]
+
+    def get_stores(self, obj):
+        """Vraća sve prodavnice prisutne u stavkama narudžbine (za mešovite narudžbine)."""
+        stores = set()
+        for item in obj.items.all():
+            if item.product_id and item.product and item.product.store:
+                stores.add(item.product.store)
+        # Fallback na store same narudžbine ako stavke nemaju proizvod (obrisan)
+        if not stores and obj.store:
+            stores.add(obj.store)
+        return sorted(stores)
 
 
 class OrderCreateSerializer(serializers.ModelSerializer):
@@ -201,7 +321,7 @@ class OrderCreateSerializer(serializers.ModelSerializer):
     class Meta:
         model = Order
         fields = [
-            'customer_name', 'customer_phone', 'customer_email',
+            'store', 'customer_name', 'customer_phone', 'customer_email',
             'address', 'city', 'notes', 'items'
         ]
         extra_kwargs = {
@@ -275,20 +395,21 @@ class OrderCreateSerializer(serializers.ModelSerializer):
             # Calculate price
             if variant:
                 unit_price = variant.final_price
-                # Ako product nije postavljen, uzmi ga iz variant.product
                 if not product and hasattr(variant, 'product') and variant.product:
                     product = variant.product
                 product_name = product.name if product else (variant.product.name if hasattr(variant, 'product') and variant.product else 'Unknown Product')
                 variant_name = variant.name
             elif product:
-                unit_price = product.current_price
+                unit_price = product.current_price or 0
                 product_name = product.name
                 variant_name = ''
             else:
-                # Fallback - use price from item_data if available
                 unit_price = item_data.get('unit_price', 0)
                 product_name = item_data.get('product_name', 'Unknown Product')
                 variant_name = item_data.get('variant_name', '')
+
+            if product and product.selling_mode == 'on_request':
+                unit_price = 0
             
             total_price = unit_price * quantity
             total_amount += total_price
@@ -307,7 +428,7 @@ class OrderCreateSerializer(serializers.ModelSerializer):
         # Create order with total_amount
         order = Order.objects.create(
             **validated_data,
-            total_amount=total_amount
+            total_amount=total_amount if total_amount > 0 else None
         )
         
         # Create OrderItems
@@ -326,7 +447,7 @@ class ContactMessageSerializer(serializers.ModelSerializer):
     """
     class Meta:
         model = ContactMessage
-        fields = ['id', 'name', 'email', 'phone', 'message', 'is_read', 'is_replied', 'created_at']
+        fields = ['id', 'store', 'name', 'email', 'phone', 'message', 'is_read', 'is_replied', 'created_at']
         read_only_fields = ['id', 'created_at']
         extra_kwargs = {
             'email': {'required': False, 'allow_blank': True, 'allow_null': True},

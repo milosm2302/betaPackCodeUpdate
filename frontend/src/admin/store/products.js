@@ -6,14 +6,18 @@ export const useProductStore = defineStore('adminProducts', {
     state: () => ({
         list: [],
         loading: false,
-        error: null
+        error: null,
+        currentStore: null
     }),
 
     actions: {
-        async fetch() {
+        async fetch(store = null) {
             this.loading = true
+            if (store !== null) this.currentStore = store
             try {
-                const res = await api.get('products/')
+                const activeStore = store !== null ? store : this.currentStore
+                const params = activeStore ? { store: activeStore } : {}
+                const res = await api.get('products/', { params })
                 this.list = res.data
             } catch (e) {
                 console.error('Greška fetch proizvoda:', e)

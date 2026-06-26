@@ -35,6 +35,7 @@ const doConfirm = () => {
   closeConfirm()
 }
 const emit = defineEmits(['update-count'])
+const props = defineProps({ store: { type: String, default: 'steel' } })
 
 const productStore = useProductStore()
 const userProductStore = useUserProductStore()
@@ -79,7 +80,10 @@ const form = ref({
   in_stock: true,
   stock_quantity: 0,
   sold_by_length: false,
-  length_per_unit: 6.0
+  length_per_unit: 6.0,
+  selling_mode: 'piece',
+  package_size: 1,
+  dimensions: ''
 })
 
 // Stock management
@@ -170,7 +174,7 @@ const saveProductOrder = async () => {
     await api.post('/products/reorder/', { orders })
 
     // Refresh products
-    await productStore.fetch()
+    await productStore.fetch(props.store)
     await userProductStore.fetchProducts()
 
     isDraggingMode.value = false
@@ -266,7 +270,10 @@ const openAddModal = () => {
     in_stock: true,
     stock_quantity: 0,
     sold_by_length: false,
-    length_per_unit: 6.0
+    length_per_unit: 6.0,
+    selling_mode: 'piece',
+    package_size: 1,
+    dimensions: ''
   }
 
   // Reset first variant form
@@ -296,7 +303,10 @@ const openEditModal = async (product) => {
     in_stock: product.in_stock !== undefined ? product.in_stock : true,
     stock_quantity: product.stock_quantity || 0,
     sold_by_length: product.sold_by_length || false,
-    length_per_unit: product.length_per_unit || 6.0
+    length_per_unit: product.length_per_unit || 6.0,
+    selling_mode: product.selling_mode || 'piece',
+    package_size: product.package_size || 1,
+    dimensions: product.dimensions || ''
   }
 
   // Fetch variants for this product
@@ -353,7 +363,7 @@ const updateStockQuantity = async () => {
     })
     
     // Refresh products
-    await productStore.fetch()
+    await productStore.fetch(props.store)
     closeStockModal()
   } catch (err) {
     console.error('Error updating stock:', err)
@@ -497,35 +507,69 @@ const saveProduct = async () => {
   error.value = ''
 
   try {
-    // Validation for new products: must have at least one variant
-    if (!isEditing.value) {
-      // Validate first variant price
-      if (!variantForm.value.price || variantForm.value.price <= 0) {
-        openConfirm('Cena varijante je obavezna i mora biti veća od 0!', null)
+    const isAmbalaza = props.store === 'ambalaza'
+
+    let data
+    if (isAmbalaza) {
+      // === AMBALAŽA: cena, način prodaje i dimenzije se unose direktno na proizvodu ===
+      const onRequest = form.value.selling_mode === 'on_request'
+
+      // Validacija
+      if (!isEditing.value && !onRequest && (!form.value.price || form.value.price <= 0)) {
+        openConfirm('Cena je obavezna i mora biti veća od 0!', null)
         saving.value = false
         return
       }
 
-      // Set default variant name if empty
-      if (!variantForm.value.name.trim()) {
-        variantForm.value.name = 'Standardna'
-      }
-    }
+      const priceValue = onRequest ? null : parseFloat(form.value.price || 0)
 
-    const data = {
-      name: form.value.name,
-      description: form.value.description,
-      // Use first variant's price as product price (for backward compatibility)
-      price: !isEditing.value ? parseFloat(variantForm.value.price) : parseFloat(form.value.price || 0),
-      category: form.value.category,
-      subcategory: form.value.subcategory || null,
-      // Product-level on_sale and sale_price are deprecated, set to false/null
-      on_sale: false,
-      sale_price: null,
-      featured: form.value.featured || false,
-      in_stock: form.value.in_stock !== undefined ? form.value.in_stock : true,
-      stock_quantity: form.value.stock_quantity || 0,
-      sold_by_length: form.value.sold_by_length || false
+      data = {
+        name: form.value.name,
+        description: form.value.description,
+        price: priceValue,
+        category: form.value.category,
+        subcategory: form.value.subcategory || null,
+        store: 'ambalaza',
+        on_sale: form.value.on_sale || false,
+        sale_price: form.value.on_sale ? parseFloat(form.value.sale_price || 0) : null,
+        featured: form.value.featured || false,
+        in_stock: form.value.in_stock !== undefined ? form.value.in_stock : true,
+        stock_quantity: form.value.stock_quantity || 0,
+        sold_by_length: false,
+        selling_mode: form.value.selling_mode || 'piece',
+        package_size: form.value.package_size || 1,
+        dimensions: form.value.dimensions || ''
+      }
+    } else {
+      // === GVOŽĐARA: originalno ponašanje (cena iz prve varijante) — NE MENJATI ===
+      if (!isEditing.value) {
+        // Validate first variant price
+        if (!variantForm.value.price || variantForm.value.price <= 0) {
+          openConfirm('Cena varijante je obavezna i mora biti veća od 0!', null)
+          saving.value = false
+          return
+        }
+        // Set default variant name if empty
+        if (!variantForm.value.name.trim()) {
+          variantForm.value.name = 'Standardna'
+        }
+      }
+
+      data = {
+        name: form.value.name,
+        description: form.value.description,
+        // Use first variant's price as product price (for backward compatibility)
+        price: !isEditing.value ? parseFloat(variantForm.value.price) : parseFloat(form.value.price || 0),
+        category: form.value.category,
+        subcategory: form.value.subcategory || null,
+        // Product-level on_sale and sale_price are deprecated, set to false/null
+        on_sale: false,
+        sale_price: null,
+        featured: form.value.featured || false,
+        in_stock: form.value.in_stock !== undefined ? form.value.in_stock : true,
+        stock_quantity: form.value.stock_quantity || 0,
+        sold_by_length: form.value.sold_by_length || false
+      }
     }
 
     let productId
@@ -541,16 +585,18 @@ const saveProduct = async () => {
         headers: authHeaders
       })
       productId = response.data.id
-      await productStore.fetch() // Refresh list
+      await productStore.fetch(props.store) // Refresh list
 
-      // For new products, create the first variant immediately
+      // Gvožđara: kreiraj obaveznu prvu varijantu. Ambalaža nema varijante (cena je na proizvodu).
       try {
-        await api.post('product-variants/', {
-          product: productId,
-          ...variantForm.value
-        }, {
-          headers: authHeaders
-        })
+        if (!isAmbalaza) {
+          await api.post('product-variants/', {
+            product: productId,
+            ...variantForm.value
+          }, {
+            headers: authHeaders
+          })
+        }
       } catch (err) {
         console.error('Error creating first variant:', err)
         const errorMsg = err.response?.data?.detail || err.response?.data?.message || 'Greška pri kreiranju varijante.'
@@ -603,6 +649,7 @@ const saveProduct = async () => {
       }
     }
 
+    await productStore.fetch(props.store)
     emit('update-count')
     // Osveži proizvode u user store-u da se prikažu nove slike
     await userProductStore.fetchProducts()
@@ -622,6 +669,7 @@ const deleteProduct = (product) => {
     async () => {
       try {
         await productStore.remove(product.id)
+        await productStore.fetch(props.store)
         emit('update-count')
       } catch (err) {
         console.error(err)
@@ -645,13 +693,13 @@ const closeDetailModal = () => {
 }
 
 const handleDetailUpdate = async () => {
-  await productStore.fetch()
+  await productStore.fetch(props.store)
   emit('update-count')
 }
 
 // Handle updates from variant/image managers in tabs
 const handleTabUpdate = async () => {
-  await productStore.fetch()
+  await productStore.fetch(props.store)
   await userProductStore.fetchProducts()
 
   // Refresh variants list for the current product
@@ -671,13 +719,17 @@ const handleTabUpdate = async () => {
 }
 
 // On load
-onMounted(async () => {
+const loadData = async () => {
   loading.value = true
-  await categoryStore.fetch()
-  await subcategoryStore.fetch()
-  await productStore.fetch()
+  await categoryStore.fetch(props.store)
+  await subcategoryStore.fetch(props.store)
+  await productStore.fetch(props.store)
   loading.value = false
-})
+}
+
+watch(() => props.store, loadData)
+
+onMounted(loadData)
 </script>
 
 <template>
@@ -1015,8 +1067,8 @@ onMounted(async () => {
       :max-width="isEditing ? 'max-w-[600px]' : 'max-w-[480px]'"
       @close="closeModal"
     >
-      <!-- Tab Navigation (only when editing) -->
-      <div v-if="isEditing" class="flex gap-1.5 mb-3 border-b border-gray-200 overflow-x-auto">
+      <!-- Tab Navigation (only when editing gvožđara - ambalaža nema varijante) -->
+      <div v-if="isEditing && props.store === 'steel'" class="flex gap-1.5 mb-3 border-b border-gray-200 overflow-x-auto">
         <button
           type="button"
           @click="currentTab = 'basic'"
@@ -1121,8 +1173,55 @@ onMounted(async () => {
           <span class="text-gray-800 text-xs font-medium cursor-pointer">Preporučeni proizvod</span>
         </label>
 
-        <!-- Sold by Length -->
-        <div class="mt-2 bg-blue-50 p-3 rounded-lg">
+        <!-- Dimensions -->
+        <div v-if="props.store === 'ambalaza'">
+          <label class="block mb-1 text-xs font-medium text-gray-800 px-1">Dimenzije</label>
+          <input v-model="form.dimensions" type="text" placeholder="npr. 500ml, 20x30cm"
+            class="w-full px-2.5 py-1.5 rounded-lg bg-gray-100 border border-gray-200 text-xs focus:ring-2 focus:ring-[#1976d2] focus:outline-none" />
+        </div>
+
+        <!-- Selling mode (ambalaza) -->
+        <div v-if="props.store === 'ambalaza'" class="mt-2 bg-green-50 p-3 rounded-lg">
+          <label class="block mb-1 text-xs font-medium text-gray-800 px-1">Način prodaje</label>
+          <select v-model="form.selling_mode"
+            class="w-full px-2.5 py-1.5 rounded-lg bg-white border border-gray-200 text-xs focus:ring-2 focus:ring-[#1976d2] focus:outline-none cursor-pointer">
+            <option value="piece">Po komadu</option>
+            <option value="package">Po pakovanju</option>
+            <option value="weight">Po kilogramu</option>
+            <option value="on_request">Na upit (bez cene)</option>
+          </select>
+          <div v-if="form.selling_mode === 'package'" class="mt-2">
+            <label class="block mb-1 text-xs font-medium text-gray-800 px-1">Komada u pakovanju</label>
+            <input v-model.number="form.package_size" type="number" min="1"
+              class="w-full px-2.5 py-1.5 rounded-lg bg-white border border-gray-200 text-xs focus:ring-2 focus:ring-[#1976d2] focus:outline-none" />
+            <p class="text-[10px] text-gray-600 mt-1 px-1">Cena se unosi po komadu. U korpi se dodaje ceo paket.</p>
+          </div>
+
+          <!-- Cena (ambalaza) -->
+          <div v-if="form.selling_mode !== 'on_request'" class="mt-3">
+            <label class="block mb-1 text-xs font-medium text-gray-800 px-1">
+              Cena (RSD) *
+              <span v-if="form.selling_mode === 'package'" class="text-gray-500 font-normal">— po komadu</span>
+              <span v-else-if="form.selling_mode === 'weight'" class="text-gray-500 font-normal">— po kilogramu</span>
+            </label>
+            <input v-model.number="form.price" type="number" step="0.01" min="0"
+              class="w-full px-2.5 py-1.5 rounded-lg bg-white border border-gray-200 text-xs focus:ring-2 focus:ring-[#1976d2] focus:outline-none" />
+
+            <label class="flex items-center gap-2 mt-2 cursor-pointer px-1">
+              <input v-model="form.on_sale" type="checkbox" class="cursor-pointer" />
+              <span class="text-gray-800 text-xs font-medium cursor-pointer">Na akciji</span>
+            </label>
+            <input v-if="form.on_sale" v-model.number="form.sale_price" type="number" step="0.01" min="0"
+              placeholder="Akcijska cena (RSD)"
+              class="w-full mt-1 px-2.5 py-1.5 rounded-lg bg-red-50 border border-red-200 text-xs focus:ring-2 focus:ring-red-400 focus:outline-none" />
+          </div>
+          <p v-else class="mt-3 text-[10px] text-orange-600 font-semibold px-1">
+            ℹ️ Proizvod „na upit" — cena se ne prikazuje, kupac šalje upit.
+          </p>
+        </div>
+
+        <!-- Sold by Length (steel) -->
+        <div v-if="props.store === 'steel'" class="mt-2 bg-blue-50 p-3 rounded-lg">
           <label class="flex items-center gap-2 cursor-pointer px-1">
             <input v-model="form.sold_by_length" type="checkbox" class="cursor-pointer" />
             <span class="text-gray-800 text-xs font-medium cursor-pointer">Custom dužina proizvoda (prodaja po metraži)</span>
@@ -1151,8 +1250,8 @@ onMounted(async () => {
           </div>
         </div>
 
-        <!-- PRVA VARIJANTA (obavezno za nove proizvode) -->
-        <div v-if="!isEditing" class="border-t pt-5 mt-5 bg-blue-50 p-4 rounded-lg">
+        <!-- PRVA VARIJANTA (obavezno za nove proizvode - samo gvožđara) -->
+        <div v-if="!isEditing && props.store === 'steel'" class="border-t pt-5 mt-5 bg-blue-50 p-4 rounded-lg">
           <h4 class="font-semibold text-xs mb-1.5 text-gray-800 px-1">📐 Prva varijanta (obavezno)</h4>
           <p class="text-[10px] text-gray-600 mb-3 px-1">
             Svaki proizvod mora imati bar jednu varijantu. Ako proizvod nema različitih dimenzija, samo unesi cenu.

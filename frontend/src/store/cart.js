@@ -1,46 +1,36 @@
 import { defineStore } from 'pinia'
+import {
+    getSellingMode, getPackageSize, getMinQuantity, isOnRequest
+} from '@/composables/useSellingMode'
 
 export const useCartStore = defineStore('cart', {
     state: () => {
-        // Load cart from localStorage and validate items
         const savedCart = JSON.parse(localStorage.getItem('cart') || '[]')
-
-        // Filter out items without current_price (old/invalid data)
         const validItems = savedCart.filter(item => {
+            if (item.selling_mode === 'on_request') return true
             return item.current_price !== undefined && item.current_price !== null
         })
-
-        // If we filtered out items, save the cleaned cart
         if (validItems.length !== savedCart.length) {
             localStorage.setItem('cart', JSON.stringify(validItems))
         }
-
-        return {
-            items: validItems
-        }
+        return { items: validItems }
     },
 
     getters: {
-        itemCount: (state) => {
-            // Vraća broj stavki (items), ne ukupnu količinu
-            return state.items.length
-        },
+        itemCount: (state) => state.items.length,
 
         total: (state) => {
             return state.items.reduce((sum, item) => {
-                // Use stored current_price (which should already include variant price if applicable)
+                if (item.selling_mode === 'on_request') return sum
                 const price = parseFloat(item.current_price) || 0
                 return sum + (price * item.quantity)
             }, 0)
         },
-        
-        // Helper to get item price (with variant if applicable)
+
         getItemPrice: (state) => (item) => {
-            // If item has a selectedVariant with final_price, use that
-            if (item.selectedVariant && item.selectedVariant.final_price) {
+            if (item.selectedVariant?.final_price) {
                 return parseFloat(item.selectedVariant.final_price)
             }
-            // Otherwise use stored current_price
             return parseFloat(item.current_price) || 0
         },
 
@@ -49,7 +39,6 @@ export const useCartStore = defineStore('cart', {
                 const cartId = `${productId}-${variantId}`
                 return state.items.some(i => i.cartId === cartId)
             }
-            // If no variant specified, check if ANY variant of this product is in cart
             return state.items.some(i => i.id === productId)
         },
 
@@ -58,8 +47,11 @@ export const useCartStore = defineStore('cart', {
                 const cartId = `${productId}-${variantId}`
                 return state.items.find(i => i.cartId === cartId)
             }
-            // If no variant specified, return first item with this product id
             return state.items.find(i => i.id === productId)
+        },
+
+        itemsForStore: (state) => (storeId) => {
+            return state.items.filter(i => i.store === storeId)
         }
     },
 
@@ -70,9 +62,7 @@ export const useCartStore = defineStore('cart', {
 
         load() {
             const saved = localStorage.getItem('cart')
-            if (saved) {
-                this.items = JSON.parse(saved)
-            }
+            if (saved) this.items = JSON.parse(saved)
         },
 
         add(product, quantity = 1) {
@@ -81,44 +71,49 @@ export const useCartStore = defineStore('cart', {
                 : product.id
 
             const found = this.items.find(i => i.cartId === cartId)
+            const sellingMode = getSellingMode(product)
 
-            // Calculate the correct price: use variant's final_price if variant exists, otherwise use product's current_price
             let itemPrice = product.current_price
-            if (product.selectedVariant && product.selectedVariant.final_price) {
+            if (product.selectedVariant?.final_price) {
                 itemPrice = parseFloat(product.selectedVariant.final_price)
             } else {
-                itemPrice = parseFloat(product.current_price) || 0
+                itemPrice = product.current_price != null ? parseFloat(product.current_price) : null
             }
 
-            // Get length_per_unit from variant if available, otherwise from product
             let lengthPerUnit = 6.0
-            if (product.selectedVariant && product.selectedVariant.effective_length_per_unit) {
+            if (product.selectedVariant?.effective_length_per_unit) {
                 lengthPerUnit = parseFloat(product.selectedVariant.effective_length_per_unit)
-            } else if (product.selectedVariant && product.selectedVariant.length_per_unit) {
+            } else if (product.selectedVariant?.length_per_unit) {
                 lengthPerUnit = parseFloat(product.selectedVariant.length_per_unit)
             } else if (product.length_per_unit) {
                 lengthPerUnit = parseFloat(product.length_per_unit)
             }
 
+            const packageSize = getPackageSize(product)
+
             if (found) {
                 found.quantity += quantity
-                // Update price in case it changed
                 found.current_price = itemPrice
-                // Update sold_by_length and length_per_unit in case it changed
-                found.sold_by_length = product.sold_by_length || false
+                found.sold_by_length = product.sold_by_length || sellingMode === 'length'
+                found.selling_mode = sellingMode
+                found.package_size = packageSize
                 found.length_per_unit = lengthPerUnit
             } else {
                 this.items.push({
-                    cartId: cartId,
+                    cartId,
                     id: product.id,
+                    store: product.store || 'steel',
                     name: product.name,
                     current_price: itemPrice,
                     images: product.images || [],
                     category_name: product.category_name,
                     selectedVariant: product.selectedVariant || null,
-                    sold_by_length: product.sold_by_length || false,
+                    sold_by_length: product.sold_by_length || sellingMode === 'length',
+                    selling_mode: sellingMode,
+                    package_size: packageSize,
                     length_per_unit: lengthPerUnit,
-                    quantity: quantity
+                    dimensions: product.dimensions || '',
+                    quantity
                 })
             }
 
@@ -127,12 +122,12 @@ export const useCartStore = defineStore('cart', {
 
         updateQuantity(itemId, newQuantity) {
             const item = this.items.find(i => i.cartId === itemId || i.id === itemId)
-            if (item) {
-                const minQuantity = item.sold_by_length ? 0.5 : 1
-                if (newQuantity >= minQuantity) {
-                    item.quantity = newQuantity
-                    this.save()
-                }
+            if (!item) return
+
+            const minQuantity = getMinQuantity(item)
+            if (newQuantity >= minQuantity) {
+                item.quantity = newQuantity
+                this.save()
             }
         },
 
@@ -143,6 +138,11 @@ export const useCartStore = defineStore('cart', {
 
         clear() {
             this.items = []
+            this.save()
+        },
+
+        clearStore(storeId) {
+            this.items = this.items.filter(i => i.store !== storeId)
             this.save()
         }
     }

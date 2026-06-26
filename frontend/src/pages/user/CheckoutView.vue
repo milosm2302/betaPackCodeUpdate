@@ -7,6 +7,7 @@ import TheFooter from '@/components/TheFooter.vue'
 import { useCartStore } from '@/store/cart'
 import { api } from '@/services/api'
 import { getImageUrl } from '@/composables/useImageUrl'
+import { useStore } from '@/composables/useStore'
 
 // SEO Meta Tags - noindex for checkout page
 useHead({
@@ -21,6 +22,7 @@ useHead({
 
 const router = useRouter()
 const cartStore = useCartStore()
+const { storeId, storeRoute } = useStore()
 
 const form = ref({
   customer_name: '',
@@ -152,6 +154,7 @@ const submitOrder = async () => {
   try {
     // Prepare order data
     const orderData = {
+      store: storeId.value || 'steel',
       customer_name: form.value.customer_name.trim(),
       customer_phone: form.value.customer_phone.replace(/[\s\-\/]/g, ''),
       customer_email: form.value.customer_email?.trim() || null,
@@ -177,10 +180,7 @@ const submitOrder = async () => {
     cartStore.clear()
 
     // Redirect to success page
-    router.push({
-      name: 'order-success',
-      params: { orderId: response.data.id }
-    })
+    router.push(storeRoute(`/order-success/${response.data.id}`))
 
   } catch (error) {
     console.error('Order submission error:', error)
@@ -249,7 +249,7 @@ const submitOrder = async () => {
           <h2 class="text-lg font-bold text-gray-900 mb-2">Vaša korpa je prazna</h2>
           <p class="text-sm text-gray-600 mb-4">Dodajte proizvode u korpu pre naručivanja</p>
           <button
-            @click="router.push('/')"
+            @click="router.push(storeRoute())"
             class="bg-[#1976d2] hover:bg-[#1565c0] text-white font-semibold px-4 py-2 rounded-lg transition cursor-pointer text-sm"
           >
             Pogledaj proizvode

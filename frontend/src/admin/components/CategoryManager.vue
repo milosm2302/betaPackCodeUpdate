@@ -1,11 +1,12 @@
 <script setup>
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, watch } from 'vue'
 import { useCategoryStore } from '@/admin/store/categories'
 import { useSubcategoryStore } from '@/admin/store/subcategories'
 import ConfirmModal from '@/components/ConfirmModal.vue'
 import AdminModal from './AdminModal.vue'
 
 const emit = defineEmits(['update-count'])
+const props = defineProps({ store: { type: String, default: 'steel' } })
 
 const categoryStore = useCategoryStore()
 const subcategoryStore = useSubcategoryStore()
@@ -75,7 +76,8 @@ const saveCategory = async () => {
   try {
     const payload = {
       name: categoryForm.value.name,
-      description: categoryForm.value.description
+      description: categoryForm.value.description,
+      store: props.store
     }
 
     if (isEditingCategory.value) {
@@ -84,7 +86,7 @@ const saveCategory = async () => {
       await categoryStore.create(payload)
     }
 
-    emit('update-count')
+    await loadData()
     closeCategoryModal()
 
   } catch (err) {
@@ -101,7 +103,7 @@ const deleteCategory = (cat) => {
     async () => {
       try {
         await categoryStore.remove(cat.id)
-        emit('update-count')
+        await loadData()
       } catch {
         openConfirm("Ne može da se obriše kategorija jer ima proizvode!", null)
       }
@@ -173,7 +175,7 @@ const saveSubcategory = async () => {
       await subcategoryStore.create(payload)
     }
 
-    emit('update-count')
+    await loadData()
     closeSubcategoryModal()
 
   } catch (err) {
@@ -190,7 +192,7 @@ const deleteSubcategory = (sub) => {
     async () => {
       try {
         await subcategoryStore.remove(sub.id)
-        emit('update-count')
+        await loadData()
       } catch (err) {
         console.error(err)
         openConfirm(
@@ -225,11 +227,15 @@ const getSubcategoriesForCategory = (categoryId) => {
 const categories = computed(() => categoryStore.list)
 const loading = computed(() => categoryStore.loading || subcategoryStore.loading)
 
-onMounted(async () => {
-  await categoryStore.fetch()
-  await subcategoryStore.fetch()
+const loadData = async () => {
+  await categoryStore.fetch(props.store)
+  await subcategoryStore.fetch(props.store)
   emit('update-count')
-})
+}
+
+watch(() => props.store, loadData)
+
+onMounted(loadData)
 </script>
 
 <template>

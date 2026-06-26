@@ -4,8 +4,11 @@ import { useHead } from '@unhead/vue'
 import TheHeader from '@/components/TheHeader.vue'
 import TheFooter from '@/components/TheFooter.vue'
 
+import { useStore } from '@/composables/useStore'
+
 const route = useRoute()
 const router = useRouter()
+const { storeRoute } = useStore()
 
 const orderId = route.params.orderId
 
@@ -100,13 +103,13 @@ useHead({
           <!-- Actions -->
           <div class="flex flex-col sm:flex-row gap-2 justify-center">
             <button
-              @click="router.push('/')"
+              @click="router.push(storeRoute())"
               class="bg-[#1976d2] hover:bg-[#1565c0] text-white font-semibold px-4 py-2 rounded-lg transition cursor-pointer text-sm"
             >
               Vrati se na početnu
             </button>
             <button
-              @click="router.push('/kontakt')"
+              @click="router.push(storeRoute('/kontakt'))"
               class="bg-white hover:bg-gray-50 text-gray-900 font-semibold px-4 py-2 rounded-lg border border-gray-300 transition cursor-pointer text-sm"
             >
               Kontaktirajte nas

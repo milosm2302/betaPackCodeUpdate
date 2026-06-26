@@ -4,6 +4,9 @@ import { useHead } from '@unhead/vue'
 import { api } from '@/services/api'
 import TheHeader from '@/components/TheHeader.vue'
 import TheFooter from '@/components/TheFooter.vue'
+import { useStore } from '@/composables/useStore'
+
+const { storeId } = useStore()
 
 // SEO Meta Tags
 useHead({
@@ -110,7 +113,7 @@ const sendMessage = async () => {
   sending.value = true
 
   try {
-    const response = await api.post('/contact/', form.value)
+    const response = await api.post('/contact/', { ...form.value, store: storeId.value || 'steel' })
 
     if (response.data.success) {
       successMessage.value = 'Poruka uspešno poslata! Kontaktiraćemo vas uskoro.'

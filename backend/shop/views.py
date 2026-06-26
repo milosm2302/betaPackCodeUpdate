@@ -55,15 +55,14 @@ class CategoryViewSet(viewsets.ModelViewSet):
             return [permissions.AllowAny()]
         return [IsAdminUser()]
 
-    # Cache list endpoint za 15 minuta (kategorije se retko menjaju)
-    @method_decorator(cache_page(60 * 15))
-    def list(self, request, *args, **kwargs):
-        return super().list(request, *args, **kwargs)
-
-    # Cache retrieve endpoint za 15 minuta
-    @method_decorator(cache_page(60 * 15))
-    def retrieve(self, request, *args, **kwargs):
-        return super().retrieve(request, *args, **kwargs)
+    def get_queryset(self):
+        queryset = Category.objects.annotate(
+            product_count=models.Count('products')
+        ).prefetch_related('subcategories')
+        store = self.request.query_params.get('store')
+        if store:
+            queryset = queryset.filter(store=store)
+        return queryset
 
 
 # Subcategory ViewSet
@@ -75,6 +74,16 @@ class SubcategoryViewSet(viewsets.ModelViewSet):
         if self.action in ['list', 'retrieve']:
             return [permissions.AllowAny()]
         return [IsAdminUser()]
+
+    def get_queryset(self):
+        queryset = Subcategory.objects.select_related('category')
+        store = self.request.query_params.get('store')
+        category_id = self.request.query_params.get('category')
+        if store:
+            queryset = queryset.filter(category__store=store)
+        if category_id:
+            queryset = queryset.filter(category_id=category_id)
+        return queryset
 
 
 # Product ViewSet
@@ -88,21 +97,17 @@ class ProductViewSet(viewsets.ModelViewSet):
             return [permissions.AllowAny()]
         return [IsAdminUser()]
 
-    # Cache list endpoint za 5 minuta (proizvodi se retko menjaju)
-    @method_decorator(cache_page(60 * 5))
-    @method_decorator(vary_on_headers('Accept-Language'))
-    def list(self, request, *args, **kwargs):
-        return super().list(request, *args, **kwargs)
-
-    # Cache retrieve endpoint za 5 minuta
-    @method_decorator(cache_page(60 * 5))
-    def retrieve(self, request, *args, **kwargs):
-        return super().retrieve(request, *args, **kwargs)
-
     def get_serializer_context(self):
         context = super().get_serializer_context()
         context['request'] = self.request
         return context
+
+    def get_queryset(self):
+        queryset = Product.objects.prefetch_related('images', 'variants').select_related('category', 'subcategory')
+        store = self.request.query_params.get('store')
+        if store:
+            queryset = queryset.filter(store=store)
+        return queryset
 
     def get_object(self):
         """
@@ -231,6 +236,13 @@ class OrderViewSet(viewsets.ModelViewSet):
         if self.action == 'create':
             return OrderCreateSerializer
         return OrderSerializer
+
+    def get_queryset(self):
+        queryset = Order.objects.prefetch_related('items').all()
+        store = self.request.query_params.get('store')
+        if store:
+            queryset = queryset.filter(store=store)
+        return queryset
 
     def create(self, request, *args, **kwargs):
         serializer = self.get_serializer(data=request.data)
@@ -480,8 +492,13 @@ class ContactMessageViewSet(viewsets.ModelViewSet):
     serializer_class = ContactMessageSerializer
 
     def get_permissions(self):
-        # Samo admini mogu videti poruke
         if self.action in ['list', 'retrieve', 'update', 'partial_update', 'destroy']:
             return [IsAdminUser()]
-        # CREATE je javno dostupan (korisnici kreiraju poruke)
         return [permissions.AllowAny()]
+
+    def get_queryset(self):
+        queryset = ContactMessage.objects.all()
+        store = self.request.query_params.get('store')
+        if store:
+            queryset = queryset.filter(store=store)
+        return queryset

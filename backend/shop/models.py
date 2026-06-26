@@ -5,14 +5,30 @@ from django.utils.text import slugify
 import re
 
 
+STORE_CHOICES = [
+    ('steel', 'Gvožđara'),
+    ('ambalaza', 'Ambalaža'),
+]
+
+SELLING_MODE_CHOICES = [
+    ('piece', 'Po komadu'),
+    ('length', 'Po metraži'),
+    ('package', 'Po pakovanju'),
+    ('weight', 'Po kilogramu'),
+    ('on_request', 'Na upit'),
+]
+
+
 class Category(models.Model):
-    name = models.CharField(max_length=100, unique=True)
+    store = models.CharField(max_length=20, choices=STORE_CHOICES, default='steel')
+    name = models.CharField(max_length=100)
     description = models.TextField(blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
         verbose_name_plural = 'Categories'
-        ordering = ['name']
+        ordering = ['store', 'name']
+        unique_together = ['store', 'name']
 
     def __str__(self):
         return self.name
@@ -38,10 +54,12 @@ class Subcategory(models.Model):
 
 
 class Product(models.Model):
+    store = models.CharField(max_length=20, choices=STORE_CHOICES, default='steel')
     name = models.CharField(max_length=200)
-    slug = models.SlugField(max_length=250, unique=True, blank=True, help_text="SEO-friendly URL (auto-generiše se iz naziva)")
+    slug = models.SlugField(max_length=250, blank=True, help_text="SEO-friendly URL (auto-generiše se iz naziva)")
     description = models.TextField()
-    price = models.DecimalField(max_digits=10, decimal_places=2)
+    price = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
+    dimensions = models.CharField(max_length=200, blank=True, help_text="Dimenzije proizvoda (npr. 500ml)")
 
     category = models.ForeignKey(
         Category,
@@ -72,7 +90,19 @@ class Product(models.Model):
     in_stock = models.BooleanField(default=True)
     stock_quantity = models.IntegerField(default=0, help_text="Količina na lageru (0 = neograničeno)")
 
-    # Dodato: Prodaja po metraži
+    # Način prodaje
+    selling_mode = models.CharField(
+        max_length=20,
+        choices=SELLING_MODE_CHOICES,
+        default='piece',
+        help_text="Način prodaje proizvoda"
+    )
+    package_size = models.PositiveIntegerField(
+        default=1,
+        help_text="Broj komada u jednom pakovanju (za prodaju po pakovanju)"
+    )
+
+    # Dodato: Prodaja po metraži (steel - legacy, koristi selling_mode='length')
     sold_by_length = models.BooleanField(default=False, help_text="Proizvod se prodaje po metraži")
     length_per_unit = models.DecimalField(
         max_digits=10,
@@ -109,7 +139,7 @@ class Product(models.Model):
         # Proveri jedinstvenost slug-a
         unique_slug = slug
         num = 1
-        while Product.objects.filter(slug=unique_slug).exclude(pk=self.pk).exists():
+        while Product.objects.filter(slug=unique_slug, store=self.store).exclude(pk=self.pk).exists():
             unique_slug = f'{slug}-{num}'
             num += 1
 
@@ -117,8 +147,19 @@ class Product(models.Model):
 
     def save(self, *args, **kwargs):
         """Override save da osigura da length_per_unit uvek ima vrednost i generiše slug"""
+        if self.category_id and not self.store:
+            self.store = self.category.store
+        elif self.category_id:
+            self.store = self.category.store
+
+        if self.sold_by_length and self.selling_mode == 'piece':
+            self.selling_mode = 'length'
+
         if self.length_per_unit is None or self.length_per_unit == 0:
             self.length_per_unit = 6.0
+
+        if self.selling_mode == 'on_request':
+            self.price = None
 
         # Automatski generiši slug ako ne postoji
         if not self.slug:
@@ -131,6 +172,7 @@ class Product(models.Model):
 
     class Meta:
         ordering = ['order', '-created_at']  # Prvo po custom order, pa po datumu
+        unique_together = ['store', 'slug']
 
     def __str__(self):
         return self.name
@@ -138,6 +180,8 @@ class Product(models.Model):
     @property
     def current_price(self):
         """Trenutna cena proizvoda (akcijska ako je na akciji, inače osnovna)"""
+        if self.selling_mode == 'on_request':
+            return None
         if self.on_sale and self.sale_price:
             return self.sale_price
         return self.price
@@ -362,13 +406,16 @@ class Order(models.Model):
         help_text="Grad (obavezno, samo Republika Srbija)"
     )
 
+    # Prodavnica iz koje je narudžbina (steel / ambalaza)
+    store = models.CharField(max_length=20, choices=STORE_CHOICES, default='steel')
+
     # Status i napomene
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='pending')
     notes = models.TextField(blank=True, null=True, help_text="Napomena kupca")
     admin_notes = models.TextField(blank=True, help_text="Interne napomene")
 
     # Totali
-    total_amount = models.DecimalField(max_digits=10, decimal_places=2)
+    total_amount = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
 
     # Timestamps
     created_at = models.DateTimeField(auto_now_add=True)
@@ -434,6 +481,7 @@ class ContactMessage(models.Model):
     """
     Kontakt poruke sa kontakt forme
     """
+    store = models.CharField(max_length=20, choices=STORE_CHOICES, default='steel', blank=True)
     name = models.CharField(max_length=200)
     email = models.EmailField(blank=True, null=True)
     phone = models.CharField(

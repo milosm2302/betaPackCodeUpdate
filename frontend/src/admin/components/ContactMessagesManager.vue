@@ -2,6 +2,7 @@
 import { ref, onMounted, onUnmounted, computed } from 'vue'
 import { useContactMessagesStore } from '../store/contactMessages'
 import ConfirmModal from '@/components/ConfirmModal.vue'
+import { getStoreById } from '@/config/stores'
 
 const emit = defineEmits(['update-count'])
 
@@ -170,6 +171,12 @@ onMounted(async () => {
                 class="px-2 py-0.5 bg-green-500 text-white text-[10px] font-bold rounded-full"
               >
                 ODGOVORENO
+              </span>
+              <span
+                v-if="message.store"
+                class="px-2 py-0.5 rounded-full text-[10px] font-bold bg-gray-100 text-gray-700"
+              >
+                {{ getStoreById(message.store).icon }} {{ getStoreById(message.store).shortLabel }}
               </span>
             </div>
 

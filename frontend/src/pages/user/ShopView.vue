@@ -8,6 +8,13 @@ import { useProductStore } from '@/store/products'
 import { useCategoryStore } from '@/store/categories'
 import { useCartStore } from '@/store/cart'
 import { getImageUrl } from '@/composables/useImageUrl'
+import { useStore } from '@/composables/useStore'
+import { getStoreById } from '@/config/stores'
+import {
+  getSellingMode, getQuantityStep, getMinQuantity, getDefaultQuantity,
+  isValidQuantity, isValidLengthQuantity, isOnRequest, isPackageMode,
+  isLengthMode, isWeightMode, formatPriceLabel, getPackageNote
+} from '@/composables/useSellingMode'
 
 // Schema.org JSON-LD for LocalBusiness
 const localBusinessSchema = {
@@ -110,35 +117,32 @@ const organizationSchema = {
   ]
 }
 
-// SEO Meta Tags
+const router = useRouter()
+const { storeId, store, storeRoute } = useStore()
+const heroStore = computed(() => store.value || getStoreById('steel'))
+
+// SEO Meta Tags (store-aware)
 useHead({
-  title: 'Kovano Gvožđe Beograd | BetaPack - Bravarski Materijali Batajnica, Zemun',
+  title: () => heroStore.value.seoTitle,
   meta: [
-    {
-      name: 'description',
-      content: 'Kovano gvožđe Beograd - BetaPack prodaja bravarskih materijala u Batajnici, Zemun. Profili, kutije, firiketi i ukrasni elementi za proizvodnju ograda, kapija i gelenđera. Dostava na teritoriji cele Srbije.'
-    },
-    {
-      name: 'keywords',
-      content: 'kovano gvožđe Beograd, kupiti kovano gvožđe Beograd, cena profila za ogradu, kovano gvožđe Batajnica, bravarski materijali Beograd, bravarija Zemun, profili za ograde Beograd, cena firiketa, ukrasni elementi Beograd, gde kupiti kovano gvožđe, firiketi cena, kutije za kapije, gelenderi Beograd, kapije kovano gvožđe, materijal za ogradu cena'
-    },
+    { name: 'description', content: () => heroStore.value.seoDescription },
     // Open Graph (Facebook, LinkedIn)
     { property: 'og:site_name', content: 'BetaPack' },
-    { property: 'og:title', content: 'Kovano Gvožđe Beograd | BetaPack Batajnica' },
-    { property: 'og:description', content: 'BetaPack - prodaja bravarskih materijala od kovanog gvožđa u Beogradu. Profili, ukrasni elementi za proizvodnju ograda, kapija, gelendera.' },
+    { property: 'og:title', content: () => heroStore.value.seoTitle },
+    { property: 'og:description', content: () => heroStore.value.seoDescription },
     { property: 'og:image', content: 'https://www.betapack.co.rs/Betapack-hero-image-optimized.jpg' },
     { property: 'og:image:width', content: '1200' },
     { property: 'og:image:height', content: '630' },
-    { property: 'og:image:alt', content: 'BetaPack - Kovano gvožđe i bravarski proizvodi' },
+    { property: 'og:image:alt', content: () => `BetaPack - ${heroStore.value.heroTitle}` },
     { property: 'og:url', content: 'https://www.betapack.co.rs' },
     { property: 'og:type', content: 'website' },
     { property: 'og:locale', content: 'sr_RS' },
     // Twitter Card
     { name: 'twitter:card', content: 'summary_large_image' },
-    { name: 'twitter:title', content: 'Kovano Gvožđe Beograd | BetaPack' },
-    { name: 'twitter:description', content: 'BetaPack Batajnica - prodaja bravarskih materijala od kovanog gvožđa za Beograd i okolinu' },
+    { name: 'twitter:title', content: () => heroStore.value.seoTitle },
+    { name: 'twitter:description', content: () => heroStore.value.seoDescription },
     { name: 'twitter:image', content: 'https://www.betapack.co.rs/Betapack-hero-image-optimized.jpg' },
-    { name: 'twitter:image:alt', content: 'BetaPack - Kovano gvožđe i bravarski proizvodi' }
+    { name: 'twitter:image:alt', content: () => `BetaPack - ${heroStore.value.heroTitle}` }
   ],
   link: [
     { rel: 'canonical', href: 'https://www.betapack.co.rs' }
@@ -159,7 +163,6 @@ useHead({
   ]
 })
 
-const router = useRouter()
 const productStore = useProductStore()
 const categoryStore = useCategoryStore()
 const cartStore = useCartStore()
@@ -261,9 +264,8 @@ const prevSlide = () => {
 }
 
 const viewProductDetail = (product) => {
-  // Koristi slug ako postoji, inače ID (backward compatibility)
   const identifier = product.slug || product.id || product
-  router.push(`/proizvod/${identifier}`)
+  router.push(storeRoute(`/proizvod/${identifier}`))
 }
 
 // Product quantities (key = product.id, value = quantity)
@@ -272,42 +274,35 @@ const productQuantities = ref({})
 // Selected variants per product (key = product.id, value = variant or null)
 const selectedVariants = ref({})
 
-// Get quantity for a product (default 1 or 0.5 for sold_by_length)
 const getQuantity = (productId) => {
   if (productQuantities.value[productId] !== undefined) {
     return productQuantities.value[productId]
   }
-  // Always return 1 for initial display (not 0.5)
-  return 1
+  const product = productStore.products.find(p => p.id === productId)
+  return product ? getDefaultQuantity(product) : 1
 }
 
-// Validate quantity for sold_by_length products (must be whole number or whole + 0.5)
-const isValidLengthQuantity = (quantity) => {
-  if (quantity <= 0) return false
-  // Check if it's a whole number or whole + 0.5
-  const decimalPart = quantity % 1
-  return decimalPart === 0 || decimalPart === 0.5
-}
-
-// Set quantity for a product
 const setQuantity = (productId, quantity) => {
   const product = productStore.products.find(p => p.id === productId)
-  const minQuantity = product?.sold_by_length ? 0.5 : 1
+  const minQuantity = product ? getMinQuantity(product) : 1
   if (quantity < minQuantity) quantity = minQuantity
-  
-  // Validate for sold_by_length products
-  if (product?.sold_by_length && !isValidLengthQuantity(quantity)) {
-    quantityError.value[productId] = 'Proizvod se prodaje ceo ili na pola (npr. 1, 1.5, 2, 2.5). Uneta vrednost nije validna.'
-    // Round to nearest valid value (whole or whole + 0.5)
-    const whole = Math.floor(quantity)
-    const decimal = quantity % 1
-    quantity = decimal < 0.25 ? whole : (decimal < 0.75 ? whole + 0.5 : whole + 1)
+
+  if (product && !isValidQuantity(product, quantity)) {
+    const mode = getSellingMode(product)
+    if (mode === 'length') {
+      quantityError.value[productId] = 'Proizvod se prodaje ceo ili na pola (npr. 1, 1.5, 2, 2.5). Uneta vrednost nije validna.'
+      const whole = Math.floor(quantity)
+      const decimal = quantity % 1
+      quantity = decimal < 0.25 ? whole : (decimal < 0.75 ? whole + 0.5 : whole + 1)
+    } else if (mode === 'package') {
+      quantityError.value[productId] = `Količina mora biti višekratnik pakovanja (${product.package_size} kom.)`
+      const pkg = parseInt(product.package_size, 10) || 1
+      quantity = Math.max(pkg, Math.round(quantity / pkg) * pkg)
+    }
   } else {
     quantityError.value[productId] = null
   }
-  
-  // Ensure quantity is always at least 1 for display (but can be 0.5 for sold_by_length)
-  if (!product?.sold_by_length && quantity < 1) quantity = 1
+
   productQuantities.value[productId] = quantity
 }
 
@@ -346,17 +341,18 @@ const getSortedVariantsByDimension = (product) => {
 // Set selected variant for a product
 const setSelectedVariant = (productId, variant) => {
   selectedVariants.value[productId] = variant
-  // Reset quantity to 1 when variant changes
-  setQuantity(productId, 1)
+  const product = productStore.products.find(p => p.id === productId)
+  setQuantity(productId, product ? getDefaultQuantity(product) : 1)
 }
 
 // Get price for a product (considering selected variant)
 const getProductPrice = (product) => {
+  if (isOnRequest(product)) return null
   const variant = getSelectedVariant(product)
   if (variant) {
     return parseFloat(variant.current_price || variant.price)
   }
-  return parseFloat(product.current_price) || 0
+  return product.current_price != null ? parseFloat(product.current_price) : null
 }
 
 // Check if selected variant is on sale
@@ -407,63 +403,41 @@ const getCartQuantity = (product) => {
 
 // Update quantity in cart
 const updateCartQuantity = (product, newQuantity) => {
-  const minQuantity = product.sold_by_length ? 0.5 : 1
+  const minQuantity = getMinQuantity(product)
   if (newQuantity < minQuantity) return
-  
-  // Validate for sold_by_length products
-  if (product.sold_by_length && !isValidLengthQuantity(newQuantity)) {
-    quantityError.value[product.id] = 'Proizvod se prodaje ceo ili na pola (npr. 1, 1.5, 2, 2.5). Uneta vrednost nije validna.'
-    // Round to nearest valid value (whole or whole + 0.5)
-    const whole = Math.floor(newQuantity)
-    const decimal = newQuantity % 1
-    newQuantity = decimal < 0.25 ? whole : (decimal < 0.75 ? whole + 0.5 : whole + 1)
-    // Clear error after a short delay
-    setTimeout(() => {
-      quantityError.value[product.id] = null
-    }, 3000)
+
+  if (!isValidQuantity(product, newQuantity)) {
+    if (isLengthMode(product)) {
+      quantityError.value[product.id] = 'Proizvod se prodaje ceo ili na pola (npr. 1, 1.5, 2, 2.5). Uneta vrednost nije validna.'
+      const whole = Math.floor(newQuantity)
+      const decimal = newQuantity % 1
+      newQuantity = decimal < 0.25 ? whole : (decimal < 0.75 ? whole + 0.5 : whole + 1)
+    } else if (isPackageMode(product)) {
+      const pkg = parseInt(product.package_size, 10) || 1
+      newQuantity = Math.max(pkg, Math.round(newQuantity / pkg) * pkg)
+    }
+    setTimeout(() => { quantityError.value[product.id] = null }, 3000)
   } else {
     quantityError.value[product.id] = null
   }
-  
+
   const variant = getSelectedVariant(product)
-  const cartId = variant 
-    ? `${product.id}-${variant.id}`
-    : product.id
-  
+  const cartId = variant ? `${product.id}-${variant.id}` : product.id
   cartStore.updateQuantity(cartId, newQuantity)
 }
 
-// Add product to cart directly from card
 const addToCartFromCard = (product) => {
   const quantity = getQuantity(product.id)
-  
-  // Validate for sold_by_length products
-  if (product.sold_by_length && !isValidLengthQuantity(quantity)) {
-    quantityError.value[product.id] = 'Proizvod se prodaje ceo ili na pola (npr. 1, 1.5, 2, 2.5). Uneta vrednost nije validna.'
-    // Round to nearest valid value (whole or whole + 0.5)
-    const whole = Math.floor(quantity)
-    const decimal = quantity % 1
-    const validQuantity = decimal < 0.25 ? whole : (decimal < 0.75 ? whole + 0.5 : whole + 1)
-    setQuantity(product.id, validQuantity)
-    // Clear error after a short delay
-    setTimeout(() => {
-      quantityError.value[product.id] = null
-    }, 3000)
+
+  if (!isValidQuantity(product, quantity)) {
+    setQuantity(product.id, getDefaultQuantity(product))
     return
   }
-  
+
   quantityError.value[product.id] = null
   const variant = getSelectedVariant(product)
-
-  const productToAdd = {
-    ...product,
-    selectedVariant: variant
-  }
-
-  cartStore.add(productToAdd, quantity)
-  // Don't redirect - stay on shop page so user can add more variants
-  // Reset quantity to 1 after adding
-  setQuantity(product.id, 1)
+  cartStore.add({ ...product, selectedVariant: variant }, quantity)
+  setQuantity(product.id, getDefaultQuantity(product))
 }
 
 // Remove product from cart
@@ -522,10 +496,23 @@ watch(filteredProducts, () => {
   })
 }, { deep: true })
 
-onMounted(async () => {
-  await categoryStore.fetchCategories()
-  await productStore.fetchProducts()
+const loadStoreData = async () => {
+  // Reset filters when switching store
+  selectedCategory.value = null
+  selectedSubcategory.value = null
+  searchQuery.value = ''
+  showOnlyOnSale.value = false
+  selectedVariants.value = {}
+  productQuantities.value = {}
+  await categoryStore.fetchCategories(storeId.value)
+  await productStore.fetchProducts(storeId.value)
+}
+
+watch(storeId, () => {
+  loadStoreData()
 })
+
+onMounted(loadStoreData)
 </script>
 
 <template>
@@ -538,8 +525,8 @@ onMounted(async () => {
       <div class="relative overflow-hidden" style="height: 450px;">
         <!-- Background Image -->
         <img
-          src="/Betapack-hero-image-optimized.jpg"
-          alt="BetaPack - Kovano gvožđe i bravarski proizvodi"
+          :src="heroStore.heroImage"
+          :alt="`BetaPack - ${heroStore.heroTitle}`"
           fetchpriority="high"
           class="absolute inset-0 w-full h-full object-cover"
         />
@@ -548,10 +535,10 @@ onMounted(async () => {
         <div class="absolute inset-0 flex items-center justify-center">
           <div class="text-center text-white px-6 py-8 max-w-4xl rounded-xl animate-fade-in-up" style="background-color: rgba(0, 0, 0, 0.65); backdrop-filter: blur(4px);">
             <h1 class="text-3xl lg:text-5xl xl:text-6xl font-bold mb-4 uppercase" style="text-shadow: 2px 2px 8px rgba(0,0,0,0.9); animation-delay: 0.2s;">
-              Kovano gvožđe i bravarski proizvodi
+              {{ heroStore.heroTitle }}
             </h1>
             <p class="text-base lg:text-xl text-white" style="text-shadow: 2px 2px 6px rgba(0,0,0,0.9); animation-delay: 0.4s;">
-              Širok asortiman kvalitetnih proizvoda - profili, cevi, čelik u traci, ukrasni elementi i dodatna oprema za bravariju
+              {{ heroStore.heroSubtitle }}
             </p>
           </div>
         </div>
@@ -566,8 +553,9 @@ onMounted(async () => {
               Pogledaj katalog
             </a>
             <router-link
-              to="/kontakt"
-              class="bg-[#1976d2] hover:bg-[#1565c0] text-white font-semibold px-6 py-3 rounded-lg transition cursor-pointer shadow-lg text-sm lg:text-base"
+              :to="storeRoute('/kontakt')"
+              class="text-white font-semibold px-6 py-3 rounded-lg transition cursor-pointer shadow-lg text-sm lg:text-base"
+              :style="{ backgroundColor: heroStore.accentColor }"
             >
               Kontaktiraj nas
             </router-link>
@@ -910,12 +898,16 @@ onMounted(async () => {
                       <div class="mt-auto">
                         <div class="flex items-center justify-between mb-2">
                           <div>
-                            <p v-if="isVariantOnSale(product)" class="text-xs text-gray-400 line-through mb-0.5">
+                            <p v-if="isVariantOnSale(product) && !isOnRequest(product)" class="text-xs text-gray-400 line-through mb-0.5">
                               {{ formatPrice(getVariantOriginalPrice(product)) }}
                             </p>
-                            <p class="text-base font-bold" :class="isVariantOnSale(product) ? 'text-red-600' : 'text-green-700'">
-                              {{ formatPrice(getProductPrice(product)) }}
+                            <p v-if="isOnRequest(product)" class="text-base font-bold text-orange-600">
+                              Cena na upit
                             </p>
+                            <p v-else class="text-base font-bold" :class="isVariantOnSale(product) ? 'text-red-600' : 'text-green-700'">
+                              {{ formatPriceLabel(product, formatPrice) }}
+                            </p>
+                            <p v-if="product.dimensions" class="text-[10px] text-gray-500 mt-0.5">{{ product.dimensions }}</p>
                           </div>
                         </div>
 
@@ -945,29 +937,35 @@ onMounted(async () => {
                             <span class="text-xs font-bold text-gray-700">Količina:</span>
                             <div class="flex items-center gap-2 bg-gray-100 rounded-xl p-1">
                               <button
-                                @click="setQuantity(product.id, getQuantity(product.id) - (product.sold_by_length ? 0.5 : 1))"
+                                @click="setQuantity(product.id, getQuantity(product.id) - getQuantityStep(product))"
                                 class="w-8 h-8 bg-white rounded-lg hover:bg-gray-200 transition text-base font-bold cursor-pointer shadow-sm"
                               >
                                 -
                               </button>
                               <input
                                 :value="getQuantity(product.id)"
-                                @input="setQuantity(product.id, parseFloat($event.target.value) || (product.sold_by_length ? 0.5 : 1))"
+                                @input="setQuantity(product.id, parseFloat($event.target.value) || getMinQuantity(product))"
                                 type="number"
-                                :min="product.sold_by_length ? 0.5 : 1"
-                                :step="product.sold_by_length ? 0.5 : 1"
+                                :min="getMinQuantity(product)"
+                                :step="getQuantityStep(product)"
                                 class="w-16 text-center text-base font-bold text-gray-900 bg-white border border-gray-300 rounded-lg px-2 py-1 focus:ring-2 focus:ring-[#1976d2] focus:outline-none"
                               />
                               <button
-                                @click="setQuantity(product.id, getQuantity(product.id) + (product.sold_by_length ? 0.5 : 1))"
+                                @click="setQuantity(product.id, getQuantity(product.id) + getQuantityStep(product))"
                                 class="w-8 h-8 bg-white rounded-lg hover:bg-gray-200 transition text-base font-bold cursor-pointer shadow-sm"
                               >
                                 +
                               </button>
                             </div>
                           </div>
-                          <p v-if="product.sold_by_length" class="text-[10px] text-blue-600 font-semibold italic">
+                          <p v-if="isLengthMode(product)" class="text-[10px] text-blue-600 font-semibold italic">
                             ℹ️ Proizvodi se prodaju po komadu (1 kom = {{ getVariantLength(product) || product.length_per_unit || 6 }} m), uz mogućnost kupovine celog ili pola komada ({{ ((getVariantLength(product) || product.length_per_unit || 6) / 2).toFixed(1) }} m).
+                          </p>
+                          <p v-if="isPackageMode(product)" class="text-[10px] text-green-600 font-semibold italic">
+                            📦 {{ getPackageNote(product) }} — cena po komadu
+                          </p>
+                          <p v-if="isWeightMode(product)" class="text-[10px] text-blue-600 font-semibold italic">
+                            ⚖️ Prodaja po kilogramu
                           </p>
                           <p v-if="quantityError[product.id]" class="text-[10px] text-red-600 font-semibold italic mt-1">
                             ❌ {{ quantityError[product.id] }}
@@ -985,30 +983,33 @@ onMounted(async () => {
                       </div>
                       <div class="flex items-center justify-between w-full px-4 bg-gray-100 rounded-xl py-1">
                         <button
-                          @click.stop="updateCartQuantity(product, getCartQuantity(product) - (product.sold_by_length ? 0.5 : 1))"
-                          :disabled="getCartQuantity(product) <= (product.sold_by_length ? 0.5 : 1)"
+                          @click.stop="updateCartQuantity(product, getCartQuantity(product) - getQuantityStep(product))"
+                          :disabled="getCartQuantity(product) <= getMinQuantity(product)"
                           class="w-8 h-8 bg-white rounded-lg hover:bg-gray-200 transition text-base font-bold cursor-pointer shadow-sm disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center"
                         >
                           -
                         </button>
                         <input
                           :value="getCartQuantity(product)"
-                          @input="updateCartQuantity(product, parseFloat($event.target.value) || (product.sold_by_length ? 0.5 : 1))"
-                          @blur="updateCartQuantity(product, Math.max(product.sold_by_length ? 0.5 : 1, parseFloat($event.target.value) || (product.sold_by_length ? 0.5 : 1)))"
+                          @input="updateCartQuantity(product, parseFloat($event.target.value) || getMinQuantity(product))"
+                          @blur="updateCartQuantity(product, Math.max(getMinQuantity(product), parseFloat($event.target.value) || getMinQuantity(product)))"
                           type="number"
-                          :min="product.sold_by_length ? 0.5 : 1"
-                          :step="product.sold_by_length ? 0.5 : 1"
+                          :min="getMinQuantity(product)"
+                          :step="getQuantityStep(product)"
                           class="w-16 text-center text-base font-bold text-gray-900 bg-white border border-gray-300 rounded-lg px-2 py-1 focus:ring-2 focus:ring-[#1976d2] focus:outline-none"
                         />
                         <button
-                          @click.stop="updateCartQuantity(product, getCartQuantity(product) + (product.sold_by_length ? 0.5 : 1))"
+                          @click.stop="updateCartQuantity(product, getCartQuantity(product) + getQuantityStep(product))"
                           class="w-8 h-8 bg-white rounded-lg hover:bg-gray-200 transition text-base font-bold cursor-pointer shadow-sm flex items-center justify-center"
                         >
                           +
                         </button>
                       </div>
-                      <p v-if="product.sold_by_length" class="text-[10px] text-blue-600 font-semibold italic text-center">
+                      <p v-if="isLengthMode(product)" class="text-[10px] text-blue-600 font-semibold italic text-center">
                         📏 Izabrano je {{ (getCartQuantity(product) * (getVariantLength(product) || product.length_per_unit || 6)).toFixed(2) }} metara
+                      </p>
+                      <p v-if="isPackageMode(product)" class="text-[10px] text-green-600 font-semibold italic text-center">
+                        📦 {{ getCartQuantity(product) / (product.package_size || 1) }} pak. ({{ getCartQuantity(product) }} kom.)
                       </p>
                       <p v-if="quantityError[product.id]" class="text-[10px] text-red-600 font-semibold italic text-center mt-1">
                         ❌ {{ quantityError[product.id] }}
@@ -1027,7 +1028,7 @@ onMounted(async () => {
                       @click.stop="addToCartFromCard(product)"
                       class="w-full bg-gradient-to-r from-[#1976d2] to-[#1565c0] hover:from-[#1565c0] hover:to-[#0d47a1] text-white font-bold py-3 rounded-xl transition-all duration-300 cursor-pointer shadow-lg hover:shadow-xl text-sm lg:text-base"
                     >
-                      + Dodaj u korpu
+                      {{ isOnRequest(product) ? 'Dodaj na upit' : '+ Dodaj u korpu' }}
                     </button>
                   </div>
                 </div>
